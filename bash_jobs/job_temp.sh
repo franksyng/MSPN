@@ -1,0 +1,9 @@
+
+# 1536
+python ../main_rl.py --arch abmil_rpn --ann /home/frank/PycharmProjects/mrs_bc/annotations/annotations_cohort_1_partial.csv --split_dir /home/frank/PycharmProjects/mrs_bc/annotations/5fold_splits_pr/ --data_dir /media/frank/FlashVol/all_data/clean/conch_feats/leica_1st_he_256_20x_feats/ --res_root ../results/conch/pr/1536  --task pr --lr 2e-4 --gc 32 --epochs 150 --in_dim 512 --scheduler CALR  --pos_enc --fov 1536
+
+python ../main_rl.py --arch abmil_rpn --ann /home/frank/PycharmProjects/mrs_bc/annotations/annotations_cohort_1_partial.csv --split_dir /home/frank/PycharmProjects/mrs_bc/annotations/5fold_splits_er/ --data_dir /media/frank/FlashVol/all_data/clean/conch_feats/leica_1st_he_256_20x_feats/ --res_root ../results/conch/er/1536  --task er --lr 2e-4 --gc 32 --epochs 150 --in_dim 512 --scheduler CALR  --pos_enc --fov 1536
+
+python ../main_rl.py --arch abmil_rpn --ann /home/frank/PycharmProjects/mrs_bc/annotations/annotations_cohort_1_partial.csv --split_dir /home/frank/PycharmProjects/mrs_bc/annotations/5fold_splits_her2/ --data_dir /media/frank/FlashVol/all_data/clean/conch_feats/leica_1st_he_256_20x_feats/ --res_root ../results/conch/her2/1536  --task her2 --lr 2e-4 --gc 32 --epochs 150 --in_dim 512 --scheduler CALR  --pos_enc --fov 1536
+
+python ../main_rl_surv.py --arch abmil_rpn --ann /home/frank/PycharmProjects/mrs_bc/annotations/annotations_surgen_surv.csv --split_dir /home/frank/PycharmProjects/mrs_bc/annotations/5fold_splits_surgen_surv/ --data_dir /media/frank/FlashVol/all_data/clean/conch_feats/surgen_256_20x_feats/ --res_root ../results/conch/surv/1536  --task surgen_surv --lr 2e-4 --gc 32 --epochs 150 --in_dim 512 --scheduler CALR --pos_enc --fov 1536

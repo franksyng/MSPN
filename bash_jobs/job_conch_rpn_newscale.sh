@@ -1,0 +1,13 @@
+#!/bin/sh
+
+python ../main_rl_copy.py --arch abmil_rpn --ann /home/frank/PycharmProjects/mrs_bc/annotations/annotations_cohort_1_partial.csv --split_dir /home/frank/PycharmProjects/mrs_bc/annotations/5fold_splits_pr/ --data_dir /media/frank/FlashVol/all_data/clean/conch_feats/leica_1st_he_256_20x_feats/ --res_root ../results/conch_newscale/pr  --task pr --lr 2e-4 --gc 32 --epochs 150 --in_dim 512 --scheduler CALR  --pos_enc
+
+python ../main_rl_copy.py --arch abmil --ann /home/frank/PycharmProjects/mrs_bc/annotations/annotations_cohort_1_partial.csv --split_dir /home/frank/PycharmProjects/mrs_bc/annotations/5fold_splits_pr/ --data_dir /media/frank/FlashVol/all_data/clean/conch_feats/leica_1st_he_256_20x_feats/ --res_root ../results/conch_newscale/pr  --task pr --lr 2e-4 --gc 32 --epochs 150 --in_dim 512 --scheduler CALR 
+
+python ../main_rl_copy.py --arch abmil_rpn --ann /home/frank/PycharmProjects/mrs_bc/annotations/annotations_cohort_1_partial.csv --split_dir /home/frank/PycharmProjects/mrs_bc/annotations/5fold_splits_er/ --data_dir /media/frank/FlashVol/all_data/clean/conch_feats/leica_1st_he_256_20x_feats/ --res_root ../results/conch_newscale/er  --task er --lr 2e-4 --gc 32 --epochs 150 --in_dim 512 --scheduler CALR  --pos_enc
+
+python ../main_rl_copy.py --arch abmil --ann /home/frank/PycharmProjects/mrs_bc/annotations/annotations_cohort_1_partial.csv --split_dir /home/frank/PycharmProjects/mrs_bc/annotations/5fold_splits_er/ --data_dir /media/frank/FlashVol/all_data/clean/conch_feats/leica_1st_he_256_20x_feats/ --res_root ../results/conch_newscale/er  --task er --lr 2e-4 --gc 32 --epochs 150 --in_dim 512 --scheduler CALR 
+
+# python ../main_rl_copy.py --arch abmil_rpn --ann /home/frank/PycharmProjects/mrs_bc/annotations/annotations_cohort_1_partial.csv --split_dir /home/frank/PycharmProjects/mrs_bc/annotations/5fold_splits_her2/ --data_dir /media/frank/FlashVol/all_data/clean/conch_feats/leica_1st_he_256_20x_feats/ --res_root ../results/conch_newscale/her2  --task her2 --lr 2e-4 --gc 32 --epochs 150 --in_dim 512 --scheduler CALR  --pos_enc
+
+# python ../main_rl_copy.py --arch abmil --ann /home/frank/PycharmProjects/mrs_bc/annotations/annotations_cohort_1_partial.csv --split_dir /home/frank/PycharmProjects/mrs_bc/annotations/5fold_splits_her2/ --data_dir /media/frank/FlashVol/all_data/clean/conch_feats/leica_1st_he_256_20x_feats/ --res_root ../results/conch_newscale/her2  --task her2 --lr 2e-4 --gc 32 --epochs 150 --in_dim 512 --scheduler CALR 
