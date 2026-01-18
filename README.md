@@ -1,6 +1,6 @@
 # MSPN
 Multi-scale Pyramidal Network. A plug-and-play module suitable for attention-based MIL frameworks that introduced progressive multi-scale analysis over WSI.
-
+![](./assets/overview.png)
 ___
 # Environment
 We used ```torch 2.2.0``` with ```CUDA 12.3``` on Ubuntu 22.04.3 LTS for implementation. Any environment that able to run an MIL pipeline should be able to run MSPN.
