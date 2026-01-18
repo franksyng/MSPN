@@ -18,7 +18,7 @@ from backbones.virchow2 import virchow2
 from backbones.optimus import h_optimus_1
 from backbones.uni import uni2
 from huggingface_hub import login
-login(token='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')
+login(token='your token')
 
 
 def setup_seed(seed, device):
