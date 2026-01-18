@@ -51,8 +51,7 @@ def train_baseline(model, device, epochs, cls_num, optimizer, scheduler, criteri
         # if epoch > 5:
         early_stop_counter += 1
 
-        if val_logs['val_auc'] > best_logs['val_auc'] and test_logs['test_auc'] > best_logs['test_auc']:
-            # if epoch >= 5:
+        if val_logs['val_auc'] > best_logs['val_auc']:
             best_logs = logging_epoch(best_logs, [train_logs, val_logs, test_logs])
             best_logs['epoch'] = epoch + 1
             best_logs['weight'] = deepcopy(model.state_dict())
@@ -108,7 +107,7 @@ def train_baseline_surv(model, device, epochs, optimizer, scheduler, criterion, 
         if epoch > 5:
             early_stop_counter += 1
 
-        if val_logs['val_cindex'] > best_logs['val_cindex'] and test_logs['test_cindex'] > best_logs['test_cindex']:
+        if val_logs['val_cindex'] > best_logs['val_cindex']:
             # if epoch > 5:
             best_logs = logging_epoch(best_logs, [train_logs, val_logs, test_logs])
             best_logs['epoch'] = epoch + 1

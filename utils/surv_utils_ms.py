@@ -1,16 +1,11 @@
 
 # basic imports
-import numpy as np
-from sklearn import metrics
-from torch import device
 from tqdm import tqdm
 import numpy as np
-from copy import deepcopy
 from sksurv.metrics import concordance_index_censored
 
 # torch
 import torch
-import torch.nn as nn
 
 from utils.universal_utils import load_loop_logs
 from utils.metric_utils import MetricLogger
@@ -36,7 +31,6 @@ def slide_level_loop_surv_ms(model, device, optimizer, criterion, gc, loader, ca
             censorship = censorship.to(device, dtype=torch.float32)
             if len(data) == 2:
                 data, coords = data
-                # data = data.to(device, dtype=torch.float32)
                 data = [each.to(device, dtype=torch.float32) for each in data]
                 with torch.torch.set_grad_enabled(phase == 'train'):
                     if 'clam' in mdl_name:
@@ -55,7 +49,6 @@ def slide_level_loop_surv_ms(model, device, optimizer, criterion, gc, loader, ca
                         output, _ = mdl_out
                         loss = criterion(logits=output, y=target, c=censorship)
             else:
-                # data = data.to(device, dtype=torch.float32)
                 data = [each.to(device, dtype=torch.float32) for each in data]
                 with torch.torch.set_grad_enabled(phase == 'train'):
                     if 'clam' in mdl_name:
@@ -110,9 +103,7 @@ def evaluate_surv_ms(model, device, criterion, test_loader, mdl_name='None'):
             censorship = censorship.to(device, dtype=torch.float32)
             if len(data) == 2:
                 data, coords = data
-                # data = data.to(device, dtype=torch.float32)
                 data = [each.to(device, dtype=torch.float32) for each in data]
-                # coords = coords.to(device, dtype=torch.float32)
                 with torch.no_grad():
                     if 'clam' in mdl_name:
                         mdl_out = model(data, coords, label=target, instance_eval=True)
@@ -130,7 +121,6 @@ def evaluate_surv_ms(model, device, criterion, test_loader, mdl_name='None'):
                         output, _ = mdl_out
                         loss = criterion(logits=output, y=target, c=censorship)
             else:
-                # data = data.to(device, dtype=torch.float32)
                 data = [each.to(device, dtype=torch.float32) for each in data]
                 with torch.no_grad():
                     if 'clam' in mdl_name:
@@ -147,10 +137,6 @@ def evaluate_surv_ms(model, device, criterion, test_loader, mdl_name='None'):
             interval_loss.append(loss_value)
             pbar.set_postfix(**{'loss (batch)': np.mean(interval_loss)})
             out_probs = torch.softmax(output, dim=1)
-            # risk = -torch.sum(S, dim=1).detach().cpu().numpy()
-            # all_risk_scores[idx] = risk
-            # all_censorships[idx] = censorship.item()
-            # all_event_times[idx] = surv_month
             hazards = torch.sigmoid(output)
             survival = torch.cumprod(1 - hazards, dim=1)
             risk = -torch.sum(survival, dim=1).detach().cpu().numpy()
@@ -177,44 +163,18 @@ class NLLSurvLoss(object):
 
     def __call__(self, logits, y, c):
         return nll_loss(logits=logits, y=y.unsqueeze(dim=1), c=c.unsqueeze(dim=1), alpha=self.alpha, eps=self.eps)
-        
-# def nll_loss(logits, y, c, alpha=0.0, eps=1e-7):
-#     batch_size = len(Y)
-#     Y = Y.view(batch_size, 1)  # ground truth bin, 1,2,...,k
-#     c = c.view(batch_size, 1).float()  # censorship status, 0 or 1
-#     if S is None:
-#         S = torch.cumprod(1 - hazards, dim=1)  # surival is cumulative product of 1 - hazards
-#     # without padding, S(0) = S[0], h(0) = h[0]
-#     S_padded = torch.cat([torch.ones_like(c), S], 1)  # S(-1) = 0, all patients are alive from (-inf, 0) by definition
-#     # after padding, S(0) = S[1], S(1) = S[2], etc, h(0) = h[0]
-#     # h[y] = h(1)
-#     # S[1] = S(1)
-#     uncensored_loss = -(1 - c) * (
-#         torch.log(torch.gather(S_padded, 1, Y).clamp(min=eps)) + torch.log(torch.gather(hazards, 1, Y).clamp(min=eps))
-#     )
-#     censored_loss = -c * torch.log(torch.gather(S_padded, 1, Y + 1).clamp(min=eps))
-#     neg_l = censored_loss + uncensored_loss
-#     loss = (1 - alpha) * neg_l + alpha * uncensored_loss
-#     loss = loss.mean()
-#     return loss
 
 def nll_loss(logits, y, c, alpha=0.0, eps=1e-7):
     y = y.type(torch.int64)
     c = c.type(torch.int64)
 
     hazards = torch.sigmoid(logits)
-    # print("hazards shape", hazards.shape)
-
     S = torch.cumprod(1 - hazards, dim=1)
-    # print("S.shape", S.shape, S)
 
     S_padded = torch.cat([torch.ones_like(c), S], 1)
     s_prev = torch.gather(S_padded, dim=1, index=y).clamp(min=eps)
     h_this = torch.gather(hazards, dim=1, index=y).clamp(min=eps)
     s_this = torch.gather(S_padded, dim=1, index=y+1).clamp(min=eps)
-    # print('s_prev.s_prev', s_prev.shape, s_prev)
-    # print('h_this.shape', h_this.shape, h_this)
-    # print('s_this.shape', s_this.shape, s_this)
 
     uncensored_loss = -(1 - c) * (torch.log(s_prev) + torch.log(h_this))
     censored_loss = - c * torch.log(s_this)

@@ -1,16 +1,10 @@
 
 # basic imports
-import numpy as np
-from sklearn import metrics
-from torch import device
 from tqdm import tqdm
 import numpy as np
-from copy import deepcopy
 
 # torch
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
 from utils.universal_utils import load_loop_logs
 from utils.metric_utils import print_cnf_matrix, find_pred_score_binary, eer_threshold, find_best_threshold_youden, MetricLogger

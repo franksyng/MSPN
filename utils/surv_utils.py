@@ -1,21 +1,17 @@
 
 # basic imports
-import numpy as np
-from sklearn import metrics
 from tqdm import tqdm
 import numpy as np
 from sksurv.metrics import concordance_index_censored
 
 # torch
 import torch
-import torch.nn as nn
 
 from utils.universal_utils import load_loop_logs
-from utils.metric_utils import print_cnf_matrix, find_pred_score_binary, eer_threshold, MetricLogger
+from utils.metric_utils import MetricLogger
 
 def slide_level_loop_surv(model, device, optimizer, criterion, gc, loader, case_len, reg_fn=None, l1_reg=None, phase=None, mdl_name='None'):
     loop_logger = load_loop_logs(None, phase)
-    # metrics_logger = MetricLogger(n_classes=cls_num)
     assert phase is not None  # either train, val or test should be chosen
 
     if phase == 'train':
@@ -40,13 +36,6 @@ def slide_level_loop_surv(model, device, optimizer, criterion, gc, loader, case_
                         mdl_out = model(data, coords, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(logits=output, y=target, c=censorship) + 0.5*inst_loss
-                    # elif 'dsmil' in mdl_name:
-                        # mdl_out = model(data, coords)
-                        # classes, output, _, _ = mdl_out
-                        # max_prediction, index = torch.max(classes, 0)
-                        # loss_bag = criterion(logits=output, y=target, c=censorship)
-                        # loss_max = criterion(max_prediction.view(1, -1), target)
-                        # loss = 0.5*loss_bag + 0.5*loss_max
                     else:
                         mdl_out = model(data, coords)
                         output, _ = mdl_out
@@ -58,13 +47,6 @@ def slide_level_loop_surv(model, device, optimizer, criterion, gc, loader, case_
                         mdl_out = model(data, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(logits=output, y=target, c=censorship) + 0.5*inst_loss
-                    # elif 'dsmil' in mdl_name:
-                    #     mdl_out = model(data)
-                    #     classes, output, _, _ = mdl_out
-                    #     max_prediction, index = torch.max(classes, 0)
-                    #     loss_bag = criterion(logits=output, y=target, c=censorship)
-                    #     loss_max = criterion(max_prediction.view(1, -1), target)
-                    #     loss = 0.5*loss_bag + 0.5*loss_max
                     else:
                         mdl_out = model(data)
                         output, _ = mdl_out
@@ -120,13 +102,6 @@ def evaluate_surv(model, device, criterion, test_loader, mdl_name='None'):
                         mdl_out = model(data, coords, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(logits=output, y=target, c=censorship) + 0.5*inst_loss
-                    # elif 'dsmil' in mdl_name:
-                    #     mdl_out = model(data, coords)
-                    #     classes, output, _, _ = mdl_out
-                    #     max_prediction, index = torch.max(classes, 0)
-                    #     loss_bag = criterion(logits=output, y=target, c=censorship)
-                    #     loss_max = criterion(max_prediction.view(1, -1), target)
-                    #     loss = 0.5*loss_bag + 0.5*loss_max
                     else:
                         mdl_out = model(data, coords)
                         output, _ = mdl_out
@@ -138,13 +113,6 @@ def evaluate_surv(model, device, criterion, test_loader, mdl_name='None'):
                         mdl_out = model(data, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(logits=output, y=target, c=censorship) + 0.5*inst_loss
-                    # elif 'dsmil' in mdl_name:
-                    #     mdl_out = model(data)
-                    #     classes, output, _, _ = mdl_out
-                    #     max_prediction, index = torch.max(classes, 0)
-                    #     loss_bag = criterion(logits=output, y=target, c=censorship)
-                    #     loss_max = criterion(max_prediction.view(1, -1), target)
-                    #     loss = 0.5*loss_bag + 0.5*loss_max
                     else:
                         mdl_out = model(data)
                         output, _ = mdl_out
@@ -155,10 +123,6 @@ def evaluate_surv(model, device, criterion, test_loader, mdl_name='None'):
             interval_loss.append(loss_value)
             pbar.set_postfix(**{'loss (batch)': np.mean(interval_loss)})
             out_probs = torch.softmax(output, dim=1)
-            # risk = -torch.sum(S, dim=1).detach().cpu().numpy()
-            # all_risk_scores[idx] = risk
-            # all_censorships[idx] = censorship.item()
-            # all_event_times[idx] = surv_month
             hazards = torch.sigmoid(output)
             survival = torch.cumprod(1 - hazards, dim=1)
             risk = -torch.sum(survival, dim=1).detach().cpu().numpy()
@@ -187,44 +151,18 @@ class NLLSurvLoss(object):
 
     def __call__(self, logits, y, c):
         return nll_loss(logits=logits, y=y.unsqueeze(dim=1), c=c.unsqueeze(dim=1), alpha=self.alpha, eps=self.eps)
-        
-# def nll_loss(logits, y, c, alpha=0.0, eps=1e-7):
-#     batch_size = len(Y)
-#     Y = Y.view(batch_size, 1)  # ground truth bin, 1,2,...,k
-#     c = c.view(batch_size, 1).float()  # censorship status, 0 or 1
-#     if S is None:
-#         S = torch.cumprod(1 - hazards, dim=1)  # surival is cumulative product of 1 - hazards
-#     # without padding, S(0) = S[0], h(0) = h[0]
-#     S_padded = torch.cat([torch.ones_like(c), S], 1)  # S(-1) = 0, all patients are alive from (-inf, 0) by definition
-#     # after padding, S(0) = S[1], S(1) = S[2], etc, h(0) = h[0]
-#     # h[y] = h(1)
-#     # S[1] = S(1)
-#     uncensored_loss = -(1 - c) * (
-#         torch.log(torch.gather(S_padded, 1, Y).clamp(min=eps)) + torch.log(torch.gather(hazards, 1, Y).clamp(min=eps))
-#     )
-#     censored_loss = -c * torch.log(torch.gather(S_padded, 1, Y + 1).clamp(min=eps))
-#     neg_l = censored_loss + uncensored_loss
-#     loss = (1 - alpha) * neg_l + alpha * uncensored_loss
-#     loss = loss.mean()
-#     return loss
 
 def nll_loss(logits, y, c, alpha=0.0, eps=1e-7):
     y = y.type(torch.int64)
     c = c.type(torch.int64)
 
     hazards = torch.sigmoid(logits)
-    # print("hazards shape", hazards.shape)
-
     S = torch.cumprod(1 - hazards, dim=1)
-    # print("S.shape", S.shape, S)
 
     S_padded = torch.cat([torch.ones_like(c), S], 1)
     s_prev = torch.gather(S_padded, dim=1, index=y).clamp(min=eps)
     h_this = torch.gather(hazards, dim=1, index=y).clamp(min=eps)
     s_this = torch.gather(S_padded, dim=1, index=y+1).clamp(min=eps)
-    # print('s_prev.s_prev', s_prev.shape, s_prev)
-    # print('h_this.shape', h_this.shape, h_this)
-    # print('s_this.shape', s_this.shape, s_this)
 
     uncensored_loss = -(1 - c) * (torch.log(s_prev) + torch.log(h_this))
     censored_loss = - c * torch.log(s_this)

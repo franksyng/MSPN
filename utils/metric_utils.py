@@ -7,7 +7,6 @@ import itertools
 import os
 from math import sqrt
 from scipy.stats import norm
-from sklearn.metrics import roc_curve, roc_auc_score
 
 
 def print_cnf_matrix(cnf_matrix, normalize=False):
