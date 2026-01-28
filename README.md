@@ -6,7 +6,7 @@ ___
 We used ```torch 2.2.0``` with ```CUDA 12.3``` on Ubuntu 22.04.3 LTS for implementation. However, any environment that able to run an MIL pipeline should be able to run MSPN.
 
 # 1. Preprocessing
-Patches are tiled and saved with [CLAM](https://github.com/mahmoodlab/CLAM)
+Preprocessing is performed with [CLAM](https://github.com/mahmoodlab/CLAM) toolkit. Patches under each magnification are tiled into 256x256 and saved for feature extraction.
 
 # 2. Feature extraction
 HuggingFace token is required for CONCH, UNI2 and GigaPath.
