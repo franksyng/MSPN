@@ -17,19 +17,19 @@ from models.dsmil import FCLayer, BClassifier, DSMILMS, DSMILMSCat
 from utils.surv_utils import NLLSurvLoss
 from src.builder import create_model
 
-parser = argparse.ArgumentParser('receptor prediction')
-parser.add_argument('--arch', default='amil', help='select model architecture.')
+parser = argparse.ArgumentParser('multiscale_surv')
+parser.add_argument('--arch', default='abmil', help='select model architecture.')
 parser.add_argument('--n_gpu', type=int, default=-1, help='Manually give gpu number')
 parser.add_argument('--in_dim', type=int, default=1024, help='input dim of embedding.')
 parser.add_argument('--n_classes', type=int, default=4, help='num of classes.')
 # Path and dataset params
-parser.add_argument('--ann', type=str, default='../annotations/annotations_luad_surv.csv', help='Annotation file.')
+parser.add_argument('--ann', type=str, default='/path/to', help='Annotation file.')
 parser.add_argument('--res_root', default='results', help='Result directory.')
-parser.add_argument('--split_dir', type=str, default='../annotations/5fold_splits_surv/', help='Split directory')
+parser.add_argument('--split_dir', type=str, default='/path/to', help='Split directory')
 parser.add_argument('--num_workers', type=int, default=0, help='Number of worker for dataloader')
 
 parser.add_argument('--data_bb', type=str, default='conch', help='backbone for the data')
-parser.add_argument('--task', type=str, default='luad_surv', choices=['surgen_surv'], help='Benchmarking task name')
+parser.add_argument('--task', type=str, default='surgen_surv', choices=['surgen_surv'], help='Benchmarking task name')
 
 # Optimiser params
 parser.add_argument('--opt', type=str, choices=['adam', 'adamw', 'sgd'], default='adamw')
