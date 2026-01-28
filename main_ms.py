@@ -30,7 +30,6 @@ parser.add_argument('--ann', type=str, default='../annotations/annotations_cohor
 parser.add_argument('--res_root', default='results', help='Result directory.')
 parser.add_argument('--split_dir', type=str, default='../annotations/5fold_splits_er/', help='Split directory')
 parser.add_argument('--num_workers', type=int, default=0, help='Number of worker for dataloader')
-# parser.add_argument('--data_dir', type=str, default='/media/frank/FlashVol1/all_data/clean/gigapath_feats/leica_1st_he_256_feats/', help='Data directory.')
 parser.add_argument('--data_bb', type=str, default='conch', help='backbone for the data')
 parser.add_argument('--task', type=str, choices=['er','pr', 'her2'], help='Benchmarking task name')
 

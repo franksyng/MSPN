@@ -34,7 +34,7 @@ parser.add_argument('--ann', type=str, default='../annotations/annotations_luad_
 parser.add_argument('--res_root', default='results', help='Result directory.')
 parser.add_argument('--split_dir', type=str, default='../annotations/5fold_splits_surv/', help='Split directory')
 parser.add_argument('--num_workers', type=int, default=0, help='Number of worker for dataloader')
-parser.add_argument('--data_dir', type=str, default='/media/frank/FlashVol/all_data/clean/rn50_feats/nsclc_256_20x_feats/', help='Data directory.')
+parser.add_argument('--data_dir', type=str, default='/path/to', help='Data directory.')
 parser.add_argument('--task', type=str, default='luad_surv', choices=['luad_surv', 'surgen_surv'], help='Benchmarking task name')
 
 # Optimiser params

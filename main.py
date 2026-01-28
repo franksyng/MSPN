@@ -30,7 +30,7 @@ parser.add_argument('--ann', type=str, default='../annotations/annotations_cohor
 parser.add_argument('--res_root', default='results', help='Result directory.')
 parser.add_argument('--split_dir', type=str, default='../annotations/5fold_splits_er/', help='Split directory')
 parser.add_argument('--num_workers', type=int, default=0, help='Number of worker for dataloader')
-parser.add_argument('--data_dir', type=str, default='/media/frank/FlashVol1/all_data/clean/gigapath_feats/leica_1st_he_256_feats/', help='Data directory.')
+parser.add_argument('--data_dir', type=str, default='/path/to', help='Data directory.')
 parser.add_argument('--task', type=str, choices=['er','pr', 'her2'], help='Benchmarking task name')
 
 # Optimiser params
@@ -312,6 +312,3 @@ if __name__ == '__main__':
     f1_metrics_df.to_csv(os.path.join(res_dir, 'f1_metrics.csv'))
     auc_metrics_df = pd.DataFrame(auc_metrics)
     auc_metrics_df.to_csv(os.path.join(res_dir, 'auc_metrics.csv'))
-
-
-# python main_rl.py --arch clamsb --ann ../annotations/annotations_cohort_1_partial.csv --split_dir ../annotations/5fold_splits_er/ --data_dir /media/frank/FlashVol1/all_data/clean/gigapath_feats/leica_1st_he_256_feats/  --receptor_name er  --lr 2e-5 --gc 32 --epochs 150  --in_dim 1536 --scheduler CALR --early_stopping
