@@ -6,22 +6,18 @@ import os
 import pandas as pd
 import numpy as np
 from utils.universal_utils import setup_seed_surv, create_dir, L1Reg, Lookahead
-from utils.metric_utils import eer_threshold, plot_roc_curves, save_cnf_matrix, compare_metrics
+from utils.metric_utils import compare_metrics
 from utils.core_utils import train_baseline_surv
 from utils.surv_utils import evaluate_surv
 from datasets import SlideSurvDataset
 from torch.utils.data import DataLoader
 from models.clam import CLAM_SB, CLAM_MB
 from models.baseline import MaxPool, MeanPool, CLAM_SB_Additive
-from models.selfattn_mil import SelfAttnMIL
-# from models.dbamil import DBAMIL
 from models.abmil import ABMIL
 from models.dsmil import FCLayer, BClassifier, DSMIL
-from models.TransMIL import TransMIL, TransMIL_Large
+from models.TransMIL import TransMIL
 from models.scl_wc import SCL
-from models.TODMIL import TODMIL
 from models.mspn import ABMIL_MSPN, DSMIL_MSPN, CLAMMB_MSPN, CLAMSB_MSPN
-from sklearn.utils.class_weight import compute_class_weight
 from utils.surv_utils import NLLSurvLoss
 
 parser = argparse.ArgumentParser('mspn_surv')
@@ -122,8 +118,6 @@ if __name__ == '__main__':
             model = CLAM_SB(n_classes=cls_num, embed_dim=args.in_dim)
         elif arch == 'clammb':
             model = CLAM_MB(n_classes=cls_num, embed_dim=args.in_dim)
-        elif arch == 'additivemil':
-            model = CLAM_SB_Additive(n_classes=cls_num, in_dim=args.in_dim)
         elif arch == 'abmil':
             model = ABMIL(in_channels=args.in_dim, n_classes=cls_num)
         elif arch == 'meanpool':
@@ -132,8 +126,6 @@ if __name__ == '__main__':
             model = MaxPool(in_dim=args.in_dim, n_classes=cls_num)
         elif arch == 'transmil':
             model = TransMIL(in_dim=args.in_dim, n_classes=cls_num)
-        elif arch == 'scl':
-            model = SCL(in_dim=args.in_dim, n_classes=cls_num)
         elif arch == 'dsmil':
             i_classifier = FCLayer(args.in_dim, 512, cls_num)
             b_classifier = BClassifier(input_size=512)
