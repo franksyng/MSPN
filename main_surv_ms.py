@@ -14,7 +14,6 @@ from torch.utils.data import DataLoader
 from models.clam import CLAM_MB_MS, CLAM_SB_MS, CLAM_MB_MSCat, CLAM_SB_MSCat
 from models.abmil import ABMILMS, ABMILMSCat, ABMILPreMS, ABMILPreMSCat, ABMILPretrained
 from models.dsmil import FCLayer, BClassifier, DSMILMS, DSMILMSCat
-from models.hag_mil import HAGMIL
 from utils.surv_utils import NLLSurvLoss
 from src.builder import create_model
 
@@ -161,12 +160,6 @@ if __name__ == '__main__':
             print("Missing keys:", missing_keys)
             print("Unexpected keys:", unexpected_keys)
             model = ABMILPreMSCat(in_channels=args.in_dim, n_classes=cls_num, abmil_head=scratch_model)
-        elif arch == 'hagmil':
-            model = HAGMIL(in_dim=args.in_dim,
-                    hidden_dims=[1024, 1536, 512, 1024],  # Bottleneck structure from paper
-                    n_classes=cls_num,
-                    num_levels=3,
-                    k_per_level=[200,800])
         elif arch == 'dsmilms':
             i_classifier = FCLayer(args.in_dim, 512, cls_num)
             b_classifier = BClassifier(input_size=512)

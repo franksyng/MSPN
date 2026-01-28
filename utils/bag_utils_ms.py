@@ -52,9 +52,6 @@ def slide_level_loop_ms(model, device, optimizer, criterion, gc, loader, case_le
                         mdl_out = model(data, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(output, target) + 0.5*inst_loss
-                    elif 'hag' in mdl_name:
-                        mdl_out = model(data, label=target)
-                        output, loss = mdl_out
                     else:
                         mdl_out = model(data)
                         output, _ = mdl_out
@@ -180,16 +177,6 @@ def evaluate_ms(model, device, criterion, test_loader, cls_num, binary, mdl_name
                         mdl_out = model(data, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(output, target) + 0.5*inst_loss
-                    elif 'hag' in mdl_name:
-                        mdl_out = model(data, label=target)
-                        output, loss = mdl_out
-                    # elif 'dsmil' in mdl_name:
-                    #     mdl_out = model(data)
-                    #     classes, output, _, _ = mdl_out
-                    #     max_prediction, index = torch.max(classes, 0)
-                    #     loss_bag = criterion(output, target)
-                    #     loss_max = criterion(max_prediction.view(1, -1), target)
-                    #     loss = 0.5*loss_bag + 0.5*loss_max
                     else:
                         mdl_out = model(data)
                         output, _ = mdl_out

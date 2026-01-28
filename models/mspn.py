@@ -32,7 +32,7 @@ class CGN(nn.Module):
         )
         
     def _build_grid(self, patch_feats, coords):
-        device = patch_feats.device
+        # device = patch_feats.device
         N, D = patch_feats.shape
 
         with torch.no_grad():
@@ -51,11 +51,9 @@ class CGN(nn.Module):
             flat_idx = v * grid_x + u
             M = grid_x * grid_y
 
-        # sums
         cell_sums = patch_feats.new_zeros((M, D))
         cell_sums.index_add_(0, flat_idx, patch_feats)
 
-        # counts (fast)
         counts = torch.bincount(flat_idx, minlength=M).to(patch_feats.dtype).unsqueeze(1)
         cell_means = cell_sums / counts.clamp_min_(1)
 
@@ -127,7 +125,7 @@ class ABMILHead(nn.Module):
             nn.Sigmoid()
         )
 
-        self.attention_w = nn.Linear(self.hid_dim_2, self.attn_branches) # matrix w (or vector w if self.ATTENTION_BRANCHES==1)
+        self.attention_w = nn.Linear(self.hid_dim_2, self.attn_branches)
 
     
     def forward(self, h):
