@@ -6,7 +6,7 @@ import os
 import pandas as pd
 import numpy as np
 from utils.universal_utils import setup_seed_surv, create_dir, L1Reg, Lookahead
-from utils.metric_utils import eer_threshold, plot_roc_curves, save_cnf_matrix, compare_metrics
+from utils.metric_utils import compare_metrics
 from utils.core_utils import train_baseline_surv
 from utils.surv_utils import evaluate_surv
 from datasets import SlideSurvDataset

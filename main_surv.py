@@ -12,11 +12,10 @@ from utils.surv_utils import evaluate_surv
 from datasets import SlideSurvDataset
 from torch.utils.data import DataLoader
 from models.clam import CLAM_SB, CLAM_MB
-from models.baseline import MaxPool, MeanPool, CLAM_SB_Additive
+from models.baseline import MaxPool, MeanPool
 from models.abmil import ABMIL
 from models.dsmil import FCLayer, BClassifier, DSMIL
 from models.TransMIL import TransMIL
-from models.scl_wc import SCL
 from models.mspn import ABMIL_MSPN, DSMIL_MSPN, CLAMMB_MSPN, CLAMSB_MSPN
 from utils.surv_utils import NLLSurvLoss
 

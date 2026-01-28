@@ -11,7 +11,6 @@ from utils.core_utils import train_baseline
 from utils.bag_utils import evaluate
 from datasets import SlideDataset
 from torch.utils.data import DataLoader
-# from models.dbamil import DBAMIL
 from models.abmil import ABMILPretrained
 from models.mspn_pre import ABMILMSPNPretrained
 from sklearn.utils.class_weight import compute_class_weight
