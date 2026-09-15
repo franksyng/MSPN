@@ -23,11 +23,11 @@ parser.add_argument('--n_gpu', type=int, default=-1, help='Manually give gpu num
 parser.add_argument('--in_dim', type=int, default=1024, help='input dim of embedding.')
 parser.add_argument('--n_classes', type=int, default=4, help='num of classes.')
 # Path and dataset params
-parser.add_argument('--ann', type=str, default='../annotations/annotations_luad_surv.csv', help='Annotation file.')
+parser.add_argument('--ann', type=str, default='your data path', help='Annotation file.')
 parser.add_argument('--res_root', default='results', help='Result directory.')
-parser.add_argument('--split_dir', type=str, default='../annotations/5fold_splits_surv/', help='Split directory')
+parser.add_argument('--split_dir', type=str, default='your data path', help='Split directory')
 parser.add_argument('--num_workers', type=int, default=0, help='Number of worker for dataloader')
-parser.add_argument('--data_dir', type=str, default='/media/frank/FlashVol/all_data/clean/rn50_feats/nsclc_256_20x_feats/', help='Data directory.')
+parser.add_argument('--data_dir', type=str, default='your data path', help='Data directory.')
 parser.add_argument('--task', type=str, default='luad_surv',
                     choices=['luad_surv', 'surgen_surv', 'kirc_surv'],
                     help='Benchmarking task name')  # kirc_surv added 2026-08-27

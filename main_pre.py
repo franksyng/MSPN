@@ -22,12 +22,12 @@ parser.add_argument('--n_gpu', type=int, default=-1, help='Manually give gpu num
 parser.add_argument('--in_dim', type=int, default=1024, help='input dim of embedding.')
 parser.add_argument('--n_classes', type=int, default=2, help='num of classes.')
 # Path and dataset params
-parser.add_argument('--ann', type=str, default='../annotations/annotations_cohort_1_partial.csv', help='Annotation file.')
+parser.add_argument('--ann', type=str, default='your data path', help='Annotation file.')
 parser.add_argument('--res_root', default='results', help='Result directory.')
-parser.add_argument('--split_dir', type=str, default='../annotations/5fold_splits_er/', help='Split directory')
+parser.add_argument('--split_dir', type=str, default='your data path', help='Split directory')
 parser.add_argument('--num_workers', type=int, default=0, help='Number of worker for dataloader')
-parser.add_argument('--data_dir', type=str, default='/media/frank/FlashVol1/all_data/clean/gigapath_feats/leica_1st_he_256_feats/', help='Data directory.')
-parser.add_argument('--task', type=str, choices=['er','pr', 'her2', 'c16', 'nsclc', 'rcc', 'thrb', 'crc', 'dahep'], help='Benchmarking task name')
+parser.add_argument('--data_dir', type=str, default='your data path', help='Data directory.')
+parser.add_argument('--task', type=str, choices=['er','pr', 'her2', 'c16', 'nsclc', 'rcc', 'thrb', 'crc'], help='Benchmarking task name')
 
 # Optimiser params
 parser.add_argument('--opt', type=str, choices=['adam', 'adamw', 'sgd'], default='adamw')
@@ -96,9 +96,6 @@ elif task == 'thrb':
     label_col = 'label'
 elif task == 'crc':
     classes = ['Normal', 'Tumor']
-    label_col = 'label'
-elif task == 'dahep':
-    classes = ['Low', 'High']
     label_col = 'label'
 else:
     print(f'Unsupported Receptor: {task}.')
@@ -330,4 +327,7 @@ if __name__ == '__main__':
     auc_metrics_df.to_csv(os.path.join(res_dir, 'auc_metrics.csv'))
 
 
-# python main_rl.py --arch clamsb --ann ../annotations/annotations_cohort_1_partial.csv --split_dir ../annotations/5fold_splits_er/ --data_dir /media/frank/FlashVol1/all_data/clean/gigapath_feats/leica_1st_he_256_feats/  --receptor_name er  --lr 2e-5 --gc 32 --epochs 150  --in_dim 1536 --scheduler CALR --early_stopping
+# python main_pre.py --arch abmilpre_mspn --pos_enc \
+#   --ann ANNOTATION_CSV --split_dir SPLIT_DIR --data_dir FEAT_DIR \
+#   --res_root results --task er --n_classes 2 --in_dim 512 \
+#   --lr 2e-4 --gc 32 --epochs 150 --scheduler CALR

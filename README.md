@@ -65,6 +65,19 @@ over every split file in `--split_dir`.
 | `main_ms.py` / `main_surv_ms.py` | multi-scale baselines | 5×/10×/20× triplet (`--data_bb`) |
 | `main_pre.py` / `main_pre_surv.py` | pretrained MIL bodies | single magnification |
 
+The single-magnification scripts take `--data_dir` directly. The two
+multi-scale scripts instead compose their three paths per task, so set
+`DATA_ROOT` at the top of `main_ms.py` / `main_surv_ms.py` and lay the features
+out as
+
+```
+<DATA_ROOT>/<backbone>_feats/<cohort>_256_{5x,10x,20x}_feats/*.h5
+```
+
+where `<backbone>` is whatever you pass to `--data_bb`. Every path argument
+ships with the placeholder default `your data path`, so a run that forgets one
+fails immediately rather than reading the wrong cohort.
+
 ```bash
 python main.py --arch abmil_mspn --pos_enc \
     --ann ANNOTATION_CSV --split_dir SPLIT_DIR --data_dir FEAT_DIR \

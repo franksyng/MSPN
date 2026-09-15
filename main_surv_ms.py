@@ -24,11 +24,10 @@ parser.add_argument('--n_gpu', type=int, default=-1, help='Manually give gpu num
 parser.add_argument('--in_dim', type=int, default=1024, help='input dim of embedding.')
 parser.add_argument('--n_classes', type=int, default=4, help='num of classes.')
 # Path and dataset params
-parser.add_argument('--ann', type=str, default='../annotations/annotations_luad_surv.csv', help='Annotation file.')
+parser.add_argument('--ann', type=str, default='your data path', help='Annotation file.')
 parser.add_argument('--res_root', default='results', help='Result directory.')
-parser.add_argument('--split_dir', type=str, default='../annotations/5fold_splits_surv/', help='Split directory')
+parser.add_argument('--split_dir', type=str, default='your data path', help='Split directory')
 parser.add_argument('--num_workers', type=int, default=0, help='Number of worker for dataloader')
-# parser.add_argument('--data_dir', type=str, default='/home/frank/datasets/rn50_feats/nsclc_256_20x_feats/', help='Data directory.')
 parser.add_argument('--data_bb', type=str, default='conch', help='backbone for the data')
 parser.add_argument('--task', type=str, default='luad_surv', choices=['luad_surv', 'surgen_surv', 'kirc_surv', 'blca_surv', 'brca_surv'], help='Benchmarking task name')
 
@@ -63,6 +62,11 @@ split_dir = args.split_dir
 # data_dir = args.data_dir
 task = args.task
 cls_num = args.n_classes
+# Root holding the extracted features. Expected layout:
+#   <DATA_ROOT>/<backbone>_feats/<cohort>_256_{5x,10x,20x}_feats/*.h5
+# where <backbone> is --data_bb. Point this at your own features.
+DATA_ROOT = 'your data path'
+
 if task == 'luad_surv':
     classes = ['0', '1', '2', '3']
     label_col = 'label'
@@ -70,33 +74,33 @@ if task == 'luad_surv':
     # same corrected source as 20x: patch-count ratios are 0.255 and 0.066
     # against the ideal 0.25/0.0625, and the 41 slides whose 20x magnification
     # was fixed show the SAME ladder as the untouched ones.
-    data_5x = f'/home/frank/datasets/{args.data_bb}_feats/luad_256_5x_feats/'
-    data_10x = f'/home/frank/datasets/{args.data_bb}_feats/luad_256_10x_feats/'
-    data_20x = f'/home/frank/datasets/{args.data_bb}_feats/luad_256_20x_feats/'
+    data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/luad_256_5x_feats/'
+    data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/luad_256_10x_feats/'
+    data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/luad_256_20x_feats/'
 elif task == 'brca_surv':
     classes = ['0', '1', '2', '3']
     label_col = 'label'
-    data_5x = f'/home/frank/datasets/{args.data_bb}_feats/brca_256_5x_feats/'
-    data_10x = f'/home/frank/datasets/{args.data_bb}_feats/brca_256_10x_feats/'
-    data_20x = f'/home/frank/datasets/{args.data_bb}_feats/brca_256_20x_feats/'
+    data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/brca_256_5x_feats/'
+    data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/brca_256_10x_feats/'
+    data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/brca_256_20x_feats/'
 elif task == 'blca_surv':
     classes = ['0', '1', '2', '3']
     label_col = 'label'
-    data_5x = f'/home/frank/datasets/{args.data_bb}_feats/blca_256_5x_feats/'
-    data_10x = f'/home/frank/datasets/{args.data_bb}_feats/blca_256_10x_feats/'
-    data_20x = f'/home/frank/datasets/{args.data_bb}_feats/blca_256_20x_feats/'
+    data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/blca_256_5x_feats/'
+    data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/blca_256_10x_feats/'
+    data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/blca_256_20x_feats/'
 elif task == 'kirc_surv':
     classes = ['0', '1', '2', '3']
     label_col = 'label'
-    data_5x = f'/home/frank/datasets/{args.data_bb}_feats/rcc_256_5x_feats/'
-    data_10x = f'/home/frank/datasets/{args.data_bb}_feats/rcc_256_10x_feats/'
-    data_20x = f'/home/frank/datasets/{args.data_bb}_feats/rcc_256_20x_feats/'
+    data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/rcc_256_5x_feats/'
+    data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/rcc_256_10x_feats/'
+    data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/rcc_256_20x_feats/'
 elif task == 'surgen_surv':
     classes = ['0', '1', '2', '3']
     label_col = 'label'
-    data_5x = f'/home/frank/datasets/{args.data_bb}_feats/surgen_256_5x_feats/'
-    data_10x = f'/home/frank/datasets/{args.data_bb}_feats/surgen_256_10x_feats/'
-    data_20x = f'/home/frank/datasets/{args.data_bb}_feats/surgen_256_20x_feats/'
+    data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/surgen_256_5x_feats/'
+    data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/surgen_256_10x_feats/'
+    data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/surgen_256_20x_feats/'
 else:
     print(f'Unsupported Receptor: {task}.')
     raise NotImplementedError
