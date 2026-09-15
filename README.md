@@ -1,6 +1,6 @@
-# MSPN
+# Multi-scale Pyramidal Network
 
-**Multi-scale Pyramidal Network** — a lightweight, generalisable module for
+**MSPN** — a lightweight, generalisable module for
 attention-based MIL that introduces progressive multi-scale analysis over whole
 slide images.
 
@@ -22,8 +22,7 @@ extraction.
 ## 2. Feature extraction
 
 ```bash
-python generate_features.py --backbone [conch, uni2, gigapath] \
-    --src PATCH_DIR --save_dir FEAT_DIR
+python generate_features.py --backbone [conch, uni2, gigapath] --src PATCH_DIR --save_dir FEAT_DIR
 ```
 
 ## 3. Training
@@ -31,10 +30,10 @@ python generate_features.py --backbone [conch, uni2, gigapath] \
 5-fold cross-validation happens inside a single invocation: the script iterates
 over every split file in `--split_dir`.
 
-| script | task | input |
+| Script | Task | Input |
 |---|---|---|
 | `main.py` / `main_surv.py` | classification / survival | single magnification (`--data_dir`) |
-| `main_ms.py` / `main_surv_ms.py` | multi-scale baselines | 5x/10x/20x triplet (`--data_bb`) |
+| `main_ms.py` / `main_surv_ms.py` | multi-scale baselines | 5x/10x/20x (`--data_bb`) |
 
 The single-magnification scripts take `--data_dir` directly. The two
 multi-scale scripts instead compose their three paths per task, so set
