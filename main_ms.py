@@ -12,26 +12,27 @@ from utils.bag_utils_ms import evaluate_ms
 from datasets import SlideDatasetMS
 from torch.utils.data import DataLoader
 from models.clam import CLAM_MB_MS, CLAM_SB_MS, CLAM_MB_MSCat, CLAM_SB_MSCat
-from models.abmil import ABMILMS, ABMILMSCat, ABMILPreMS, ABMILPretrained, ABMILPreMSCat
+from models.abmil import ABMILMS, ABMILMSCat
 from models.dsmil import FCLayer, BClassifier, DSMILMS, DSMILMSCat
+from models.hag_mil import HAGMIL
+from models.zoommil import ZoomMIL
 from sklearn.utils.class_weight import compute_class_weight
-from src.builder import create_model
 import matplotlib
 # Set the backend to non-interactive (Headless)
 matplotlib.use('Agg')
 
-parser = argparse.ArgumentParser('multiscale')
+parser = argparse.ArgumentParser('mspn')
 parser.add_argument('--arch', default='abmil', help='select model architecture.')
 parser.add_argument('--n_gpu', type=int, default=-1, help='Manually give gpu number')
 parser.add_argument('--in_dim', type=int, default=1024, help='input dim of embedding.')
 parser.add_argument('--n_classes', type=int, default=2, help='num of classes.')
 # Path and dataset params
-parser.add_argument('--ann', type=str, default='/path/to', help='Annotation file.')
+parser.add_argument('--ann', type=str, default='your data path', help='Annotation file.')
 parser.add_argument('--res_root', default='results', help='Result directory.')
-parser.add_argument('--split_dir', type=str, default='/path/to', help='Split directory')
+parser.add_argument('--split_dir', type=str, default='your data path', help='Split directory')
 parser.add_argument('--num_workers', type=int, default=0, help='Number of worker for dataloader')
 parser.add_argument('--data_bb', type=str, default='conch', help='backbone for the data')
-parser.add_argument('--task', type=str, choices=['er','pr', 'her2'], help='Benchmarking task name')
+parser.add_argument('--task', type=str, choices=['er','pr', 'her2', 'c16', 'nsclc', 'rcc', 'panda', 'thrb', 'crc'], help='Benchmarking task name')
 
 # Optimiser params
 parser.add_argument('--opt', type=str, choices=['adam', 'adamw', 'sgd'], default='adamw')
@@ -41,7 +42,8 @@ parser.add_argument('--batch_size', type=int, default=1)
 parser.add_argument('--epochs', type=int, help='Expected training epoch number.')
 parser.add_argument('--lr', type=float, default=2e-4, help='Learning rate.')
 parser.add_argument('--weight_decay', type=float, default=1e-4, help='L2 reg for optimizer.')
-parser.add_argument('--pos_enc', default=False, action='store_true', help='include coords')
+parser.add_argument('--use_coords', default=False, action='store_true',
+                    help='load patch coordinates alongside features; required by every *_mspn arch')
 parser.add_argument('--early_stopping', default=True, action='store_true', help='early stopping')
 # gradient accumulation
 parser.add_argument('--gc', type=int, default=1, help='Number of epoch for cumulative gradient. Set to 1 to disable l1 reg.')
@@ -53,7 +55,7 @@ args = parser.parse_args()
 # setup CUDA
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 arch = args.arch
-pos_enc = args.pos_enc
+use_coords = args.use_coords
 # setup seed
 setup_seed(args.seed, device)
 generator = torch.Generator()
@@ -70,26 +72,36 @@ if cls_num == 2:
 else:
     binary = False
 
+# <DATA_ROOT>/<backbone>_feats/{5x,10x,20x}/*.h5, <backbone> = --data_bb
+DATA_ROOT = 'your data path'
+
+data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/5x/'
+data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/10x/'
+data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/20x/'
+
 if task == 'er':
     classes = ['ER-', 'ER+']
     label_col = 'labels_er_2cls'
-    data_5x = f'/path/to/{args.data_bb}_feats/leica_1st_he_256_5x_feats/'
-    data_10x = f'/path/to/{args.data_bb}_feats/leica_1st_he_256_10x_feats/'
-    data_20x = f'/path/to/{args.data_bb}_feats/leica_1st_he_256_20x_feats/'
 elif task == 'pr':
     classes = ['PR-', 'PR+']
     label_col = 'labels_pr_2cls'
-    data_5x = f'/path/to/{args.data_bb}_feats/leica_1st_he_256_5x_feats/'
-    data_10x = f'/path/to/{args.data_bb}_feats/leica_1st_he_256_10x_feats/'
-    data_20x = f'/path/to/{args.data_bb}_feats/leica_1st_he_256_20x_feats/'
+elif task == 'c16':
+    classes = ['Normal', 'Tumor']
+    label_col = 'label'
 elif task == 'her2':
-    classes = ['Negative', 'Positive']
+    classes = ['HER2-', 'HER2+']
     label_col = 'labels_her2_2cls'
-    data_5x = f'/path/to/{args.data_bb}_feats/leica_1st_he_256_5x_feats/'
-    data_10x = f'/path/to/{args.data_bb}_feats/leica_1st_he_256_10x_feats/'
-    data_20x = f'/path/to/{args.data_bb}_feats/leica_1st_he_256_20x_feats/'
+elif task == 'panda':
+    classes = ['ISUP 0', 'ISUP 1', 'ISUP 2', 'ISUP 3', 'ISUP 4', 'ISUP 5']
+    label_col = 'label'
+elif task == 'rcc':
+    classes = ['KICH', 'KIRC', 'KIRP']
+    label_col = 'label'
+elif task == 'thrb':
+    classes = ['Low', 'High']
+    label_col = 'label'
 else:
-    print(f'Unsupported task: {task}.')
+    print(f'Unknown task: {task}.')
     raise NotImplementedError
 
 data_dir = (data_5x, data_10x, data_20x)
@@ -98,19 +110,10 @@ data_dir = (data_5x, data_10x, data_20x)
 splits = sorted(os.listdir(split_dir))  # sorted beginning from 0 to n split
 splits = [each for each in splits if each != '.DS_Store']  # partial dev env is macOS, remove influences
 # prepare result directory
-if arch == 'selfattn':
-    if args.pos_enc_2d:
-        res_name = (f"{arch}-2dpe_{task}_b{args.batch_size}_gc{args.gc}_"
-                            f"{args.opt}_e{args.epochs}_lr{args.lr}_"
-                            f"{args.loss_func}_{args.scheduler}")
-    else:
-        res_name = (f"{arch}-1dpe_{task}_b{args.batch_size}_gc{args.gc}_"
-                            f"{args.opt}_e{args.epochs}_lr{args.lr}_"
-                            f"{args.loss_func}_{args.scheduler}")
-else:
-    res_name = (f"{arch}_{task}_b{args.batch_size}_gc{args.gc}_"
-                        f"{args.opt}_e{args.epochs}_lr{args.lr}_"
-                        f"{args.loss_func}_{args.scheduler}")
+res_name = (f"{arch}_{task}_b{args.batch_size}_gc{args.gc}_"
+                    f"{args.opt}_e{args.epochs}_lr{args.lr}_"
+                    f"{args.loss_func}_{args.scheduler}"
+                    + (f"_s{args.seed}" if args.seed != 2024 else ""))
 res_dir = os.path.join(args.res_root, res_name)
 create_dir(args.res_root)  # if not exist, create one
 if args.debug == False:
@@ -122,11 +125,15 @@ roc_curves = {'val': {}, 'eval': {}}
 f1_metrics = {'train': [], 'val': [], 'test': [], 'eval': []}
 auc_metrics = {'val': [], 'test': [], 'eval': [], 'val_ci': [], 'eval_ci':[]}
 
+# ensure reproducibility
+# cpu_state = hash(torch.get_rng_state().numpy().tobytes())
+# cuda_state = hash(torch.cuda.get_rng_state().cpu().numpy().tobytes()) if device.type == 'cuda' else None
+
 # dataset and dataloader
 def get_data(curr_split):
-    train_set = SlideDatasetMS(annotations, data_dir, curr_split, label_col=label_col, set_type='train', pos_enc=pos_enc, eval_mode=False)
-    val_set = SlideDatasetMS(annotations, data_dir, curr_split, label_col=label_col, set_type='val', pos_enc=pos_enc, eval_mode=False)
-    test_set = SlideDatasetMS(annotations, data_dir, curr_split, label_col=label_col, set_type='test', pos_enc=pos_enc, eval_mode=False)
+    train_set = SlideDatasetMS(annotations, data_dir, curr_split, label_col=label_col, set_type='train', use_coords=use_coords, eval_mode=False)
+    val_set = SlideDatasetMS(annotations, data_dir, curr_split, label_col=label_col, set_type='val', use_coords=use_coords, eval_mode=False)
+    test_set = SlideDatasetMS(annotations, data_dir, curr_split, label_col=label_col, set_type='test', use_coords=use_coords, eval_mode=False)
     return train_set, val_set, test_set
 
 
@@ -134,6 +141,12 @@ if __name__ == '__main__':
     print(f'[main] SELECTED NUM. OF WORKER {args.num_workers}')
     # start n-fold cross-cv
     for i in range(len(splits)):
+        # check state
+        # curr_cpu_state = hash(torch.get_rng_state().numpy().tobytes())
+        # curr_cuda_state = hash(torch.cuda.get_rng_state().cpu().numpy().tobytes()) if device.type == 'cuda' else None
+        # assert curr_cpu_state == cpu_state
+        # assert curr_cuda_state == cuda_state
+        # split result directory
         print(f'[main] BEGINNING SPLIT {i}')
         split_path = os.path.join(split_dir, splits[i])
         split_res_dir = os.path.join(res_dir, f'split_{i}')
@@ -146,6 +159,7 @@ if __name__ == '__main__':
         create_dir(ckpt_dir)  # if not exist, create one
 
         # prepare model
+        # *ms is cross-scale attention, *mscat is concatenation
         if arch == 'clammbms':
             model = CLAM_MB_MS(n_classes=cls_num, embed_dim=args.in_dim, mil_hidden_2=64)
         elif arch == 'clamsbms':
@@ -158,30 +172,6 @@ if __name__ == '__main__':
             model = ABMILMS(in_channels=args.in_dim, n_classes=cls_num)
         elif arch == 'abmilmscat':
             model = ABMILMSCat(in_channels=args.in_dim, n_classes=cls_num)
-        elif arch == 'abmilprems':
-            pre_model = create_model('abmil.base.uni_v2.pc108-24k', from_pretrained=True, num_classes=cls_num)
-            scratch_model = ABMILPretrained(in_dim=args.in_dim, num_classes=cls_num)
-            state = pre_model.state_dict()
-            for k,v in state.items():
-                print(k)
-            state = {k.removeprefix("model."): v for k, v in state.items()}
-            state = {k: v for k, v in state.items() if 'classifier' not in k and 'patch_embed' not in k}
-            missing_keys, unexpected_keys = scratch_model.load_state_dict(state, strict=False)
-            print("Missing keys:", missing_keys)
-            print("Unexpected keys:", unexpected_keys)
-            model = ABMILPreMS(in_channels=args.in_dim, n_classes=cls_num, abmil_head=scratch_model)
-        elif arch == 'abmilpremscat':
-            pre_model = create_model('abmil.base.uni_v2.pc108-24k', from_pretrained=True, num_classes=cls_num)
-            scratch_model = ABMILPretrained(in_dim=args.in_dim, num_classes=cls_num)
-            state = pre_model.state_dict()
-            for k,v in state.items():
-                print(k)
-            state = {k.removeprefix("model."): v for k, v in state.items()}
-            state = {k: v for k, v in state.items() if 'classifier' not in k and 'patch_embed' not in k}
-            missing_keys, unexpected_keys = scratch_model.load_state_dict(state, strict=False)
-            print("Missing keys:", missing_keys)
-            print("Unexpected keys:", unexpected_keys)
-            model = ABMILPreMSCat(in_channels=args.in_dim, n_classes=cls_num, abmil_head=scratch_model)
         elif arch == 'dsmilms':
             i_classifier = FCLayer(args.in_dim, 512, cls_num)
             b_classifier = BClassifier(input_size=512)
@@ -190,9 +180,16 @@ if __name__ == '__main__':
             i_classifier = FCLayer(args.in_dim, 512, cls_num)
             b_classifier = BClassifier(input_size=512)
             model = DSMILMSCat(n_classes=cls_num, i_classifier=i_classifier, b_classifier=b_classifier, mil_hidden_1=512)
+        elif arch == 'hagmil':
+            model = HAGMIL(in_dim=args.in_dim,
+                           hidden_dims=[1024, 1536, 512, 1024],
+                           n_classes=cls_num,
+                           num_levels=3,
+                           k_per_level=[200, 800])
+        elif arch == 'zoommil':
+            model = ZoomMIL(in_feat_dim=args.in_dim, n_cls=cls_num)
         else:
             raise NotImplementedError
-
         # put model on one or multiple GPUs
         if hasattr(model, 'relocate'):
             model.relocate(device, args.n_gpu)
@@ -239,6 +236,12 @@ if __name__ == '__main__':
         class_weights = compute_class_weight(class_weight='balanced', classes=np.unique(curr_labels), y=np.array(curr_labels))
         class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device)
         if args.loss_func == 'ce':
+            # if arch == 'dsmil':
+            #     counter = [i for i in curr_labels if i == 1]
+            #     pos_weight = (len(curr_labels) - len(counter)) / len(counter)
+            #     pos_weight = torch.tensor(pos_weight)
+            #     criterion = nn.BCEWithLogitsLoss(pos_weight)
+            # else:
             criterion = nn.CrossEntropyLoss(weight=class_weights, reduction='mean')
         else:
             raise NotImplementedError
@@ -308,7 +311,8 @@ if __name__ == '__main__':
             roc_curves['eval'][f'split_{i}'] = {'roc': eval_roc, 'ci': eval_ci}
             eval_details_df.to_csv(os.path.join(split_res_dir, f'eval_details_{eval_logs["opt_th"]:.4f}.csv'))
         else:
-            eval_details_df.to_csv(os.path.join(split_res_dir, f'eval_details.csv'))
+            # eval_details_df.to_csv(os.path.join(split_res_dir, f'eval_details.csv'))
+            eval_details_df.to_csv(os.path.join(split_res_dir, f'test_details.csv')) # if multi-class, overwrite test_details.csv
 
         f1_metrics['train'].append(logs['train_f1'])
         f1_metrics['val'].append(logs['val_f1'])
@@ -341,3 +345,8 @@ if __name__ == '__main__':
     auc_metrics_df = pd.DataFrame(auc_metrics)
     auc_metrics_df.to_csv(os.path.join(res_dir, 'auc_metrics.csv'))
 
+
+# python main_ms.py --arch abmilms \
+#   --ann annotations/annotations_er.csv --split_dir annotations/5fold_splits_er/ \
+#   --data_bb conch --res_root results --task er \
+#   --n_classes 2 --in_dim 512 --lr 2e-4 --gc 32 --epochs 150 --scheduler CALR

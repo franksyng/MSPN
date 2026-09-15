@@ -1,5 +1,8 @@
 
 # basic imports
+import json
+import numpy as np
+from torch import device
 from tqdm import tqdm
 import numpy as np
 from sksurv.metrics import concordance_index_censored
@@ -31,30 +34,54 @@ def slide_level_loop_surv_ms(model, device, optimizer, criterion, gc, loader, ca
             censorship = censorship.to(device, dtype=torch.float32)
             if len(data) == 2:
                 data, coords = data
+                # data = data.to(device, dtype=torch.float32)
                 data = [each.to(device, dtype=torch.float32) for each in data]
                 with torch.torch.set_grad_enabled(phase == 'train'):
-                    if 'clam' in mdl_name:
+                    if 'clam' in mdl_name or 'scl' in mdl_name:
                         mdl_out = model(data, coords, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(logits=output, y=target, c=censorship) + 0.5*inst_loss
                     elif 'dsmil' in mdl_name:
                         mdl_out = model(data, coords)
-                        classes, output, _, _ = mdl_out
-                        max_prediction, index = torch.max(classes, 0)
-                        loss_bag = criterion(logits=output, y=target, c=censorship)
-                        loss_max = criterion(max_prediction.view(1, -1), target)
-                        loss = 0.5*loss_bag + 0.5*loss_max
+                        # DSMIL emits 4 values (classes, bag_pred, A, B) in its
+                        # classification form, but the MSPNTrue wrapper built
+                        # with surv=True returns just (pred, coarse_map) --
+                        # `if self.surv: return pred, cm` in DSMIL_MSPNTrue.
+                        # Assuming 4 crashed every dsmil_mspntrue survival run.
+                        # Branch on the actual arity rather than the name.
+                        if len(mdl_out) == 4:
+                            classes, output, _, _ = mdl_out
+                            max_prediction, _ = torch.max(classes, 0)
+                            loss = (0.5 * criterion(logits=output, y=target, c=censorship)
+                                    + 0.5 * criterion(max_prediction.view(1, -1), target))
+                        else:
+                            # surv-mode wrapper: no instance branch to combine,
+                            # so the bag NLL is the whole loss
+                            output = mdl_out[0]
+                            loss = criterion(logits=output, y=target, c=censorship)
                     else:
                         mdl_out = model(data, coords)
                         output, _ = mdl_out
                         loss = criterion(logits=output, y=target, c=censorship)
             else:
+                # data = data.to(device, dtype=torch.float32)
                 data = [each.to(device, dtype=torch.float32) for each in data]
                 with torch.torch.set_grad_enabled(phase == 'train'):
-                    if 'clam' in mdl_name:
+                    if 'clam' in mdl_name or 'scl' in mdl_name:
                         mdl_out = model(data, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(logits=output, y=target, c=censorship) + 0.5*inst_loss
+                    elif 'hag' in mdl_name:
+                        # HAG-MIL computes its own CE loss, undefined for
+                        # censored data. Here its bag logits go through the NLL
+                        # criterion and its auxiliary hierarchical and
+                        # patch-level CE losses are dropped: an adaptation, not
+                        # the published method.
+                        mdl_out = model(data)
+                        output = mdl_out['logits'] if isinstance(mdl_out, dict) else mdl_out[0]
+                        if output.dim() == 1:      # HAG-MIL emits [n_classes],
+                            output = output.unsqueeze(0)   # the NLL wants [B, n_classes]
+                        loss = criterion(logits=output, y=target, c=censorship)
                     else:
                         mdl_out = model(data)
                         output, _ = mdl_out
@@ -92,6 +119,7 @@ def evaluate_surv_ms(model, device, criterion, test_loader, mdl_name='None'):
     logs = {'eval_cindex': 0}
     eval_logger = MetricLogger(n_classes=4)
     all_risk_scores = np.zeros((len(test_loader)))
+    all_logits = []                      # RAW logits, one 4-vector per slide
     all_censorships = np.zeros((len(test_loader)))
     all_event_times = np.zeros((len(test_loader)))
     with tqdm(total=len(test_loader), desc='eval', unit=' slide', ncols=100) as pbar:
@@ -103,30 +131,50 @@ def evaluate_surv_ms(model, device, criterion, test_loader, mdl_name='None'):
             censorship = censorship.to(device, dtype=torch.float32)
             if len(data) == 2:
                 data, coords = data
+                # data = data.to(device, dtype=torch.float32)
                 data = [each.to(device, dtype=torch.float32) for each in data]
+                # coords = coords.to(device, dtype=torch.float32)
                 with torch.no_grad():
-                    if 'clam' in mdl_name:
+                    if 'clam' in mdl_name or 'scl' in mdl_name:
                         mdl_out = model(data, coords, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(logits=output, y=target, c=censorship) + 0.5*inst_loss
                     elif 'dsmil' in mdl_name:
                         mdl_out = model(data, coords)
-                        classes, output, _, _ = mdl_out
-                        max_prediction, index = torch.max(classes, 0)
-                        loss_bag = criterion(logits=output, y=target, c=censorship)
-                        loss_max = criterion(max_prediction.view(1, -1), target)
-                        loss = 0.5*loss_bag + 0.5*loss_max
+                        # DSMIL emits 4 values (classes, bag_pred, A, B) in its
+                        # classification form, but the MSPNTrue wrapper built
+                        # with surv=True returns just (pred, coarse_map) --
+                        # `if self.surv: return pred, cm` in DSMIL_MSPNTrue.
+                        # Assuming 4 crashed every dsmil_mspntrue survival run.
+                        # Branch on the actual arity rather than the name.
+                        if len(mdl_out) == 4:
+                            classes, output, _, _ = mdl_out
+                            max_prediction, _ = torch.max(classes, 0)
+                            loss = (0.5 * criterion(logits=output, y=target, c=censorship)
+                                    + 0.5 * criterion(max_prediction.view(1, -1), target))
+                        else:
+                            # surv-mode wrapper: no instance branch to combine,
+                            # so the bag NLL is the whole loss
+                            output = mdl_out[0]
+                            loss = criterion(logits=output, y=target, c=censorship)
                     else:
                         mdl_out = model(data, coords)
                         output, _ = mdl_out
                         loss = criterion(logits=output, y=target, c=censorship)
             else:
+                # data = data.to(device, dtype=torch.float32)
                 data = [each.to(device, dtype=torch.float32) for each in data]
                 with torch.no_grad():
-                    if 'clam' in mdl_name:
+                    if 'clam' in mdl_name or 'scl' in mdl_name:
                         mdl_out = model(data, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(logits=output, y=target, c=censorship) + 0.5*inst_loss
+                    elif 'hag' in mdl_name:
+                        mdl_out = model(data)
+                        output = mdl_out['logits'] if isinstance(mdl_out, dict) else mdl_out[0]
+                        if output.dim() == 1:      # HAG-MIL emits [n_classes],
+                            output = output.unsqueeze(0)   # the NLL wants [B, n_classes]
+                        loss = criterion(logits=output, y=target, c=censorship)
                     else:
                         mdl_out = model(data)
                         output, _ = mdl_out
@@ -137,6 +185,11 @@ def evaluate_surv_ms(model, device, criterion, test_loader, mdl_name='None'):
             interval_loss.append(loss_value)
             pbar.set_postfix(**{'loss (batch)': np.mean(interval_loss)})
             out_probs = torch.softmax(output, dim=1)
+            # risk = -torch.sum(S, dim=1).detach().cpu().numpy()
+            # all_risk_scores[idx] = risk
+            # all_censorships[idx] = censorship.item()
+            # all_event_times[idx] = surv_month
+            all_logits.append([float(v) for v in output.detach().cpu().view(-1)])
             hazards = torch.sigmoid(output)
             survival = torch.cumprod(1 - hazards, dim=1)
             risk = -torch.sum(survival, dim=1).detach().cpu().numpy()
@@ -153,6 +206,12 @@ def evaluate_surv_ms(model, device, criterion, test_loader, mdl_name='None'):
     eval_logger.get_correctness()
     logs['eval_pred_data'] = eval_logger.data_all
     logs['eval_pred_data']['y_pred'] = eval_logger.y_probas
+    # The c-index tooling reads these four columns; softmax(y_pred) discards
+    # the per-slide additive constant, so risk is NOT recoverable from it.
+    logs['eval_pred_data']['risk'] = list(map(float, all_risk_scores))
+    logs['eval_pred_data']['event_time'] = list(map(float, all_event_times))
+    logs['eval_pred_data']['censorship'] = list(map(float, all_censorships))
+    logs['eval_pred_data']['logits'] = [json.dumps(v) for v in all_logits]
     print(f"[core] eval - c-index: {logs['eval_cindex']:.4f}")
     return logs
 
@@ -163,13 +222,17 @@ class NLLSurvLoss(object):
 
     def __call__(self, logits, y, c):
         return nll_loss(logits=logits, y=y.unsqueeze(dim=1), c=c.unsqueeze(dim=1), alpha=self.alpha, eps=self.eps)
+        
 
 def nll_loss(logits, y, c, alpha=0.0, eps=1e-7):
     y = y.type(torch.int64)
     c = c.type(torch.int64)
 
     hazards = torch.sigmoid(logits)
+    # print("hazards shape", hazards.shape)
+
     S = torch.cumprod(1 - hazards, dim=1)
+    # print("S.shape", S.shape, S)
 
     S_padded = torch.cat([torch.ones_like(c), S], 1)
     s_prev = torch.gather(S_padded, dim=1, index=y).clamp(min=eps)

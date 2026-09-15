@@ -1,12 +1,9 @@
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from torch.optim.optimizer import Optimizer
 from collections import defaultdict, OrderedDict
 import random
 import os
 import numpy as np
-import math
 
 def setup_seed(seed, device):
     os.environ['PYTHONHASHSEED'] = str(seed)
@@ -18,9 +15,9 @@ def setup_seed(seed, device):
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed) # if you are using multi-GPU.
     torch.backends.cudnn.benchmark = False
-    # torch.use_deterministic_algorithms(True, warn_only=True)
+    torch.use_deterministic_algorithms(True, warn_only=True)
     torch.backends.cudnn.deterministic = True
-    torch.use_deterministic_algorithms(True)
+    # torch.use_deterministic_algorithms(True)
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
 
@@ -104,9 +101,6 @@ class Lookahead(Optimizer):
             slow.add_(fast_p.data - slow, alpha=group['lookahead_alpha'])
             fast_p.data.copy_(slow)
 
-    def sync_lookahead(self):
-        for group in self.param_groups:
-            self.update_slow(group)
 
     def step(self, closure=None):
         #assert id(self.param_groups) == id(self.base_optimizer.param_groups)
@@ -157,16 +151,6 @@ class Lookahead(Optimizer):
                 for group in self.param_groups:
                     group.setdefault(name, default)
 
-def find_coords_scale(x, y, eps=1e-8):
-    # max_xy = np.maximum(np.max(x), np.max(y))
-    # min_xy = np.minimum(np.min(x), np.min(y))
-    scale_x = np.maximum(np.max(x) - np.min(x), eps)
-    scale_y = np.maximum(np.max(y) - np.min(y), eps)
-    scale = np.maximum(scale_x, scale_y)
-    return scale
-
-def min_max_scaler(coord, scale):
-    return (coord-np.min(coord))/scale
 
 def load_summary_logs(binary, surv=False):
     if surv:
@@ -299,33 +283,3 @@ def print_epoch_summary(best_logs, binary):
               f" val/test auc: {best_logs['val_auc']:.4f} (CI {val_lower:.4f}-{val_upper:.4f})/{best_logs['test_auc']:.4f} (CI {test_lower:.4f}-{test_upper:.4f}),"
               f" val/test f1: {best_logs['val_f1']:.4f}/{best_logs['test_f1']:.4f}")
         
-
-def get_gpu_num(man_specified):
-    if man_specified == -1:
-        n_gpu = torch.cuda.device_count()
-    else:
-        n_gpu = man_specified
-    return n_gpu
-
-def initialize_weights(module):
-    """
-    Initialize the weights of the model with kaiming he for linear layers, and xavier for all others
-    """
-    for layer in module.modules():
-        if isinstance(layer, nn.Linear):
-            nn.init.kaiming_uniform_(layer.weight, nonlinearity='relu')
-            if layer.bias is not None:
-                nn.init.zeros_(layer.bias)
-        elif isinstance(layer, nn.Conv2d):
-            nn.init.xavier_uniform_(layer.weight)
-            if layer.bias is not None:
-                nn.init.zeros_(layer.bias)
-        elif isinstance(layer, nn.LayerNorm):
-            nn.init.ones_(layer.weight)
-            nn.init.zeros_(layer.bias)
-        elif isinstance(layer, nn.BatchNorm1d):
-            nn.init.ones_(layer.weight)
-            nn.init.zeros_(layer.bias)
-        elif isinstance(layer, nn.BatchNorm2d):
-            nn.init.ones_(layer.weight)
-            nn.init.zeros_(layer.bias)

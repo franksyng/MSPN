@@ -1,5 +1,4 @@
 import numpy as np
-import torch
 import matplotlib.pyplot as plt
 import sklearn.metrics as metrics
 from sklearn.utils import resample
@@ -49,26 +48,6 @@ def find_best_threshold_youden(fpr, tpr, th):
     youden_j = tpr - fpr
     best_idx = np.argmax(youden_j)
     return th[best_idx]
-
-def th_linear_projection(y_pred, curr_th, tgt_th=0.5):
-    """
-    function to project y_pred from the scale of one optimal threshold to the target optimal threshold
-    specifically here 0.5
-    """
-    projected_pred = []
-    tgt_range = tgt_upper = tgt_lower = tgt_th
-    for pred in y_pred:
-        residual = pred - curr_th  # if positive, 1; else, 0
-        if residual > 0:
-            # consider label 1
-            upper_range = 1 - curr_th
-            curr_percentage = residual / upper_range
-        else:
-            # consider label 0
-            lower_range = curr_th
-            curr_percentage = residual / lower_range
-        projected_pred.append(curr_percentage * tgt_range + tgt_th)  # curr_percentage * tgt_range -> projected residual
-    return projected_pred
 
 
 def compare_metrics(all_metrics: dict, save_dir):
@@ -238,11 +217,6 @@ class MetricLogger:
         self.metrics['loss'].append(loss)
         self.metrics['f1'].append(f1)
     
-    # def log_metrics_mul(self, auc, f1, loss):
-    #     self.metrics['auc'].append(auc)
-    #     self.metrics['f1'].append(f1)
-    #     self.metrics['loss'].append(loss)
-
     def get_f1(self):
         # if self.n_classes == 2:
         return metrics.f1_score(self.y_true, self.y_disc, average='macro')
@@ -261,9 +235,6 @@ class MetricLogger:
         lower, upper = get_auc_ci(self.y_true, self.y_pred)
         return metrics.roc_auc_score(self.y_true, self.y_pred), (fpr, tpr, th), (lower, upper)
 
-    def get_prc(self):
-        precision, recall, th = metrics.precision_recall_curve(self.y_true, self.y_pred, pos_label=1)
-        return (precision, recall, th)
 
     def get_cnf_matrix(self):
         cnf_matrix = metrics.confusion_matrix(self.y_true, self.y_disc)
@@ -275,12 +246,6 @@ class MetricLogger:
             return cnf_matrix, tpr, tnr, recall
         else:
             return cnf_matrix
-
-    def get_recall(self):
-        return metrics.recall_score(self.y_true, self.y_disc, average='micro')
-
-    def get_precision(self):
-        return metrics.precision_score(self.y_true, self.y_disc, average='micro')
 
     def get_metrics(self):
         return self.metrics

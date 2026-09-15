@@ -1,6 +1,5 @@
 import argparse
 import torch
-import torch.nn as nn
 import torch.optim as optim
 import os
 import pandas as pd
@@ -8,29 +7,35 @@ import numpy as np
 from utils.universal_utils import setup_seed_surv, create_dir, L1Reg, Lookahead
 from utils.metric_utils import compare_metrics
 from utils.core_utils import train_baseline_surv
-from utils.surv_utils import evaluate_surv
+from utils.surv_utils import evaluate_surv, save_surv_predictions
 from datasets import SlideSurvDataset
 from torch.utils.data import DataLoader
 from models.clam import CLAM_SB, CLAM_MB
-from models.baseline import MaxPool, MeanPool
+from models.maxpool import MaxPool
+from models.meanpool import MeanPool
 from models.abmil import ABMIL
 from models.dsmil import FCLayer, BClassifier, DSMIL
 from models.TransMIL import TransMIL
-from models.mspn import ABMIL_MSPN, DSMIL_MSPN, CLAMMB_MSPN, CLAMSB_MSPN
+from models.mspn import ABMIL_MSPN, DSMIL_MSPN, CLAMSB_MSPN, CLAMMB_MSPN
+from models.camil import build_camil
+from models.patchgcn import build_patchgcn
+from models.h2mil import build_h2mil
+from models.smmil import SmMIL
+from models.hipt import HIPT
 from utils.surv_utils import NLLSurvLoss
 
-parser = argparse.ArgumentParser('mspn_surv')
-parser.add_argument('--arch', default='amil', help='select model architecture.')
+parser = argparse.ArgumentParser('mspn')
+parser.add_argument('--arch', default='abmil', help='select model architecture.')
 parser.add_argument('--n_gpu', type=int, default=-1, help='Manually give gpu number')
 parser.add_argument('--in_dim', type=int, default=1024, help='input dim of embedding.')
 parser.add_argument('--n_classes', type=int, default=4, help='num of classes.')
 # Path and dataset params
-parser.add_argument('--ann', type=str, default='/path/to', help='Annotation file.')
+parser.add_argument('--ann', type=str, default='your data path', help='Annotation file.')
 parser.add_argument('--res_root', default='results', help='Result directory.')
-parser.add_argument('--split_dir', type=str, default='/path/to', help='Split directory')
+parser.add_argument('--split_dir', type=str, default='your data path', help='Split directory')
 parser.add_argument('--num_workers', type=int, default=0, help='Number of worker for dataloader')
-parser.add_argument('--data_dir', type=str, default='/path/to', help='Data directory.')
-parser.add_argument('--task', type=str, default='surgen_surv', choices=['surgen_surv'], help='Benchmarking task name')
+parser.add_argument('--data_dir', type=str, default='your data path', help='Data directory.')
+parser.add_argument('--task', type=str, default='luad_surv', choices=['luad_surv', 'surgen_surv', 'kirc_surv', 'blca_surv', 'brca_surv'], help='Benchmarking task name')
 
 # Optimiser params
 parser.add_argument('--opt', type=str, choices=['adam', 'adamw', 'sgd'], default='adamw')
@@ -40,8 +45,15 @@ parser.add_argument('--batch_size', type=int, default=1)
 parser.add_argument('--epochs', type=int, default=150, help='Expected training epoch number.')
 parser.add_argument('--lr', type=float, default=2e-4, help='Learning rate.')
 parser.add_argument('--weight_decay', type=float, default=1e-4, help='L2 reg for optimizer.')
-parser.add_argument('--fov', default="1536, 2048, 3072", type=str, help='select fov')
-parser.add_argument('--pos_enc', default=False, action='store_true', help='include coords')
+parser.add_argument('--fov', default="3072, 2048, 1024", type=str,
+                    help='MSPN fields of view in slide pixels, comma separated. '
+                         'A 20x tile spans 512 units, so 1024 = true 10x, '
+                         '2048 = true 5x, 3072 = 3.33x. The default is the '
+                         'configuration reported in the paper.')
+parser.add_argument('--hipt_ckpt', type=str, default=None,
+                    help='path to the vit4k_xs DINO checkpoint; required by --arch hipt')
+parser.add_argument('--use_coords', default=False, action='store_true',
+                    help='load patch coordinates alongside features; required by every *_mspn arch')
 parser.add_argument('--early_stopping', default=True, action='store_true', help='early stopping')
 # gradient accumulation
 parser.add_argument('--gc', type=int, default=32, help='Number of epoch for cumulative gradient. Set to 1 to disable l1 reg.')
@@ -53,7 +65,7 @@ args = parser.parse_args()
 # setup CUDA
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 arch = args.arch
-pos_enc = args.pos_enc
+use_coords = args.use_coords
 fov = args.fov.split(',')
 fov = [int(each) for each in fov]
 # setup seed
@@ -65,11 +77,23 @@ split_dir = args.split_dir
 data_dir = args.data_dir
 task = args.task
 cls_num = args.n_classes
-if task == 'surgen_surv':
+if task == 'luad_surv':
+    classes = ['0', '1', '2', '3']
+    label_col = 'label'
+elif task == 'brca_surv':
+    classes = ['0', '1', '2', '3']
+    label_col = 'label'
+elif task == 'blca_surv':
+    classes = ['0', '1', '2', '3']
+    label_col = 'label'
+elif task == 'kirc_surv':
+    classes = ['0', '1', '2', '3']
+    label_col = 'label'
+elif task == 'surgen_surv':
     classes = ['0', '1', '2', '3']
     label_col = 'label'
 else:
-    print(f'Unsupported task: {task}.')
+    print(f'Unknown task: {task}.')
     raise NotImplementedError
 
 # automatic cross-validation
@@ -78,7 +102,8 @@ splits = [each for each in splits if each != '.DS_Store']  # partial dev env is 
 # prepare result directory
 res_name = (f"{arch}_{task}_b{args.batch_size}_gc{args.gc}_"
                     f"{args.opt}_e{args.epochs}_lr{args.lr}_"
-                    f"{args.loss_func}_{args.scheduler}")
+                    f"{args.loss_func}_{args.scheduler}"
+                    + (f"_s{args.seed}" if args.seed != 2024 else ""))
 res_dir = os.path.join(args.res_root, res_name)
 create_dir(args.res_root)  # if not exist, create one
 if args.debug == False:
@@ -90,9 +115,9 @@ cindex_metrics = {'train': [], 'val': [], 'test': [], 'eval': []}
 
 # dataset and dataloader
 def get_data(curr_split):
-    train_set = SlideSurvDataset(annotations, data_dir, curr_split, label_col=label_col, set_type='train', pos_enc=pos_enc, eval_mode=False)
-    val_set = SlideSurvDataset(annotations, data_dir, curr_split, label_col=label_col, set_type='val', pos_enc=pos_enc, eval_mode=False)
-    test_set = SlideSurvDataset(annotations, data_dir, curr_split, label_col=label_col, set_type='test', pos_enc=pos_enc, eval_mode=False)
+    train_set = SlideSurvDataset(annotations, data_dir, curr_split, label_col=label_col, set_type='train', use_coords=use_coords, eval_mode=False)
+    val_set = SlideSurvDataset(annotations, data_dir, curr_split, label_col=label_col, set_type='val', use_coords=use_coords, eval_mode=False)
+    test_set = SlideSurvDataset(annotations, data_dir, curr_split, label_col=label_col, set_type='test', use_coords=use_coords, eval_mode=False)
     return train_set, val_set, test_set
 
 
@@ -124,24 +149,40 @@ if __name__ == '__main__':
         elif arch == 'maxpool':
             model = MaxPool(in_dim=args.in_dim, n_classes=cls_num)
         elif arch == 'transmil':
-            model = TransMIL(in_dim=args.in_dim, n_classes=cls_num)
+            model = TransMIL(in_dim=args.in_dim, surv=True, n_classes=cls_num)
         elif arch == 'dsmil':
             i_classifier = FCLayer(args.in_dim, 512, cls_num)
             b_classifier = BClassifier(input_size=512)
             model = DSMIL(in_channels=args.in_dim, n_classes=cls_num, i_classifier=i_classifier, b_classifier=b_classifier, surv=True, reduction_size=512)
-        elif arch == 'dsmil_mspn' and pos_enc != False:
+        # every *_mspn arch needs --use_coords; MSPN bins patches by coordinate
+        elif arch == 'abmil_mspn' and use_coords != False:
+            model = ABMIL_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=fov)
+        elif arch == 'dsmil_mspn' and use_coords != False:
+            # 512, not args.in_dim: the wrapper's front end already reduced
             i_classifier = FCLayer(512, 512, cls_num)
             b_classifier = BClassifier(input_size=512)
-            model = DSMIL_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=[1536, 2048, 3072], i_classifier=i_classifier, b_classifier=b_classifier, surv=True) 
-        elif arch == 'abmil_mspn' and pos_enc != False:
-            model = ABMIL_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=fov)
-        elif arch == 'clamsb_mspn' and pos_enc != False:
-            model = CLAMSB_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=[1536, 2048, 3072]) 
-        elif arch == 'clammb_mspn' and pos_enc != False:
-            model = CLAMMB_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=[1536, 2048, 3072]) 
+            model = DSMIL_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=fov, i_classifier=i_classifier, b_classifier=b_classifier, surv=True)
+        elif arch == 'clamsb_mspn' and use_coords != False:
+            model = CLAMSB_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=fov)
+        elif arch == 'clammb_mspn' and use_coords != False:
+            model = CLAMMB_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=fov)
+        elif arch == 'camil' and use_coords != False:
+            model = build_camil(args.in_dim, cls_num)
+        elif arch == 'patchgcn' and use_coords != False:
+            model = build_patchgcn(args.in_dim, cls_num)
+        elif arch == 'h2mil' and use_coords != False:
+            model = build_h2mil(args.in_dim, cls_num)
+        elif arch == 'smmil' and use_coords != False:
+            model = SmMIL(in_dim=args.in_dim, emb_dim=512, num_classes=cls_num, sm_where='early')
+        elif arch == 'hipt':
+            # HIPT takes a (w, h) grid, not coordinates
+            if not args.hipt_ckpt:
+                raise ValueError('--arch hipt requires --hipt_ckpt, the path to '
+                                 'the vit4k_xs DINO checkpoint')
+            model = HIPT(input_dim=args.in_dim, n_classes=cls_num,
+                         pretrained_vit4k=args.hipt_ckpt)
         else:
             raise NotImplementedError
-
         # put model on one or multiple GPUs
         if hasattr(model, 'relocate'):
             model.relocate(device, args.n_gpu)
@@ -222,6 +263,9 @@ if __name__ == '__main__':
 
         # TO DO: for getting prediciton score only.
         eval_details_df.to_csv(os.path.join(split_res_dir, f'test_details.csv'))
+        # Also emit the dedicated risk file the c-index tooling reads, so a
+        # survival run is self-sufficient and never needs re-evaluation.
+        save_surv_predictions(pred_details, split_res_dir)
         # pred_details = [logs['train_pred_data'], logs['val_pred_data'], logs['test_pred_data'], eval_logs['eval_pred_data']]
         # all_metrics, split_roc, split_cis, best_weight, cnf_matrices, pred_details, opt_th
 

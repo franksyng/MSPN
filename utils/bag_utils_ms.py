@@ -1,5 +1,7 @@
 
 # basic imports
+import numpy as np
+from torch import device
 from tqdm import tqdm
 import numpy as np
 
@@ -7,7 +9,7 @@ import numpy as np
 import torch
 
 from utils.universal_utils import load_loop_logs
-from utils.metric_utils import print_cnf_matrix, find_pred_score_binary, eer_threshold, find_best_threshold_youden, MetricLogger
+from utils.metric_utils import print_cnf_matrix, find_pred_score_binary, find_best_threshold_youden, MetricLogger
 
 def slide_level_loop_ms(model, device, optimizer, criterion, gc, loader, case_len, cls_num=None, reg_fn=None, l1_reg=None, phase=None, binary=False, mdl_name='None'):
     loop_logger = load_loop_logs(binary, phase)
@@ -30,7 +32,7 @@ def slide_level_loop_ms(model, device, optimizer, criterion, gc, loader, case_le
                 data = [each.to(device, dtype=torch.float32) for each in data]
                 # data = data.to(device, dtype=torch.float32)
                 with torch.torch.set_grad_enabled(phase == 'train'):
-                    if 'clam' in mdl_name:
+                    if 'clam' in mdl_name or 'scl' in mdl_name:
                         mdl_out = model(data, coords, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(output, target) + 0.5*inst_loss
@@ -48,21 +50,33 @@ def slide_level_loop_ms(model, device, optimizer, criterion, gc, loader, case_le
             else:
                 data = [each.to(device, dtype=torch.float32) for each in data]
                 with torch.torch.set_grad_enabled(phase == 'train'):
-                    if 'clam' in mdl_name:
+                    if 'clam' in mdl_name or 'scl' in mdl_name:
                         mdl_out = model(data, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(output, target) + 0.5*inst_loss
+                    elif 'hag' in mdl_name:
+                        mdl_out = model(data, label=target)
+                        output, loss = mdl_out
                     else:
                         mdl_out = model(data)
                         output, _ = mdl_out
                         loss = criterion(output, target)
 
+            # loss = criterion(output, target)
             lr_1 = optimizer.param_groups[0]['lr']
             loss_value = loss.item()
+            # A_raw, last_p_map = maps
+            # L_align = F.kl_div(
+            #         F.log_softmax(last_p_map, dim=-1),
+            #         F.softmax(A_raw, dim=-1),
+            #         reduction="batchmean"
+            #     )
 
             if gc > 1:
                 loss_reg = reg_fn.apply_reg(model) * l1_reg
+                # loss = (loss - cos_sim) / gc + loss_reg
                 loss = loss / gc + loss_reg
+                # loss = (loss + L_align) / gc + loss_reg
 
 
             if phase == 'train':
@@ -155,7 +169,7 @@ def evaluate_ms(model, device, criterion, test_loader, cls_num, binary, mdl_name
                 # data = data.to(device, dtype=torch.float32)
                 # coords = coords.to(device, dtype=torch.float32)
                 with torch.no_grad():
-                    if 'clam' in mdl_name:
+                    if 'clam' in mdl_name or 'scl' in mdl_name:
                         mdl_out = model(data, coords, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(output, target) + 0.5*inst_loss
@@ -173,10 +187,20 @@ def evaluate_ms(model, device, criterion, test_loader, cls_num, binary, mdl_name
             else:
                 data = [each.to(device, dtype=torch.float32) for each in data]
                 with torch.no_grad():
-                    if 'clam' in mdl_name:
+                    if 'clam' in mdl_name or 'scl' in mdl_name:
                         mdl_out = model(data, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(output, target) + 0.5*inst_loss
+                    elif 'hag' in mdl_name:
+                        mdl_out = model(data, label=target)
+                        output, loss = mdl_out
+                    # elif 'dsmil' in mdl_name:
+                    #     mdl_out = model(data)
+                    #     classes, output, _, _ = mdl_out
+                    #     max_prediction, index = torch.max(classes, 0)
+                    #     loss_bag = criterion(output, target)
+                    #     loss_max = criterion(max_prediction.view(1, -1), target)
+                    #     loss = 0.5*loss_bag + 0.5*loss_max
                     else:
                         mdl_out = model(data)
                         output, _ = mdl_out
@@ -221,6 +245,7 @@ def evaluate_ms(model, device, criterion, test_loader, cls_num, binary, mdl_name
         # do discrete classification stuff only after setting optimal threshold
         eval_logger.get_correctness()
         logs['eval_pred_data'] = eval_logger.data_all
+        logs['eval_pred_data']['y_pred'] = eval_logger.y_probas
         logs['eval_cnf_matrix'] = eval_logger.get_cnf_matrix()
         logs['eval_f1'] = eval_logger.get_f1()
         print(f"[core] eval - auc: {logs['eval_auc']:.4f} 95% CI ({lower:.4f}-{upper:.4f}), f1: {logs['eval_f1']:.4f}")
