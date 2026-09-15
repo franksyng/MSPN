@@ -39,8 +39,8 @@ parser.add_argument('--batch_size', type=int, default=1)
 parser.add_argument('--epochs', type=int, default=150, help='Expected training epoch number.')
 parser.add_argument('--lr', type=float, default=2e-4, help='Learning rate.')
 parser.add_argument('--weight_decay', type=float, default=1e-4, help='L2 reg for optimizer.')
-parser.add_argument('--pos_enc', default=False, action='store_true', help='use positional encoding')
-parser.add_argument('--pos_enc_2d', default=False, action='store_true', help='use 2d positional encoding')
+parser.add_argument('--use_coords', default=False, action='store_true',
+                    help='load patch coordinates alongside features; required by every *_mspn arch')
 parser.add_argument('--early_stopping', default=True, action='store_true', help='early stopping')
 # gradient accumulation
 parser.add_argument('--gc', type=int, default=32, help='Number of epoch for cumulative gradient. Set to 1 to disable l1 reg.')
@@ -52,7 +52,7 @@ args = parser.parse_args()
 # setup CUDA
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 arch = args.arch
-pos_enc = args.pos_enc
+use_coords = args.use_coords
 # setup seed
 setup_seed_surv(args.seed, device)
 
@@ -88,7 +88,7 @@ elif task == 'surgen_surv':
     classes = ['0', '1', '2', '3']
     label_col = 'label'
 else:
-    print(f'Unsupported Receptor: {task}.')
+    print(f'Unknown task: {task}.')
     raise NotImplementedError
 
 data_dir = (data_5x, data_10x, data_20x)
@@ -112,9 +112,9 @@ cindex_metrics = {'train': [], 'val': [], 'test': [], 'eval': []}
 
 # dataset and dataloader
 def get_data(curr_split):
-    train_set = SlideSurvDatasetMS(annotations, data_dir, curr_split, label_col=label_col, set_type='train', pos_enc=pos_enc, eval_mode=False)
-    val_set = SlideSurvDatasetMS(annotations, data_dir, curr_split, label_col=label_col, set_type='val', pos_enc=pos_enc, eval_mode=False)
-    test_set = SlideSurvDatasetMS(annotations, data_dir, curr_split, label_col=label_col, set_type='test', pos_enc=pos_enc, eval_mode=False)
+    train_set = SlideSurvDatasetMS(annotations, data_dir, curr_split, label_col=label_col, set_type='train', use_coords=use_coords, eval_mode=False)
+    val_set = SlideSurvDatasetMS(annotations, data_dir, curr_split, label_col=label_col, set_type='val', use_coords=use_coords, eval_mode=False)
+    test_set = SlideSurvDatasetMS(annotations, data_dir, curr_split, label_col=label_col, set_type='test', use_coords=use_coords, eval_mode=False)
     return train_set, val_set, test_set
 
 

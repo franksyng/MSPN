@@ -60,7 +60,7 @@ class GenericDataset(Dataset):
 
 
 class SlideDataset(GenericDataset):
-    def __init__(self, annotations, slides_root, splits, label_col, set_type, pos_enc=False, eval_mode=False, data_mode=None):
+    def __init__(self, annotations, slides_root, splits, label_col, set_type, use_coords=False, eval_mode=False, data_mode=None):
         super(SlideDataset, self).__init__(annotations, splits, set_type, eval_mode)
         # print('ann len in', len(self.curr_annotations))
         self.curr_annotations['case_id'] = normalize_case_id(self.curr_annotations['case_id'])
@@ -71,7 +71,7 @@ class SlideDataset(GenericDataset):
         # print('==== sann', len(split_ann))
         self.split_ann = split_ann.merge(self.curr_annotations, how='inner', on='case_id')
         self.label = label_col
-        self.pos_enc = pos_enc
+        self.use_coords = use_coords
         self.data_mode = data_mode
         # print(self.split_ann)
 
@@ -116,7 +116,7 @@ class SlideDataset(GenericDataset):
             img = self._build_spatial_grid(img, coords)
 
         # print(img_id)
-        if self.pos_enc:
+        if self.use_coords:
             return (img, coords), label, img_id
         else:
             return img, label, img_id
@@ -129,7 +129,7 @@ class SlideDataset(GenericDataset):
         return self.split_ann[self.label].values.tolist()
 
 class SlideDatasetMS(GenericDataset):
-    def __init__(self, annotations, slides_root, splits, label_col, set_type, pos_enc=False, eval_mode=False):
+    def __init__(self, annotations, slides_root, splits, label_col, set_type, use_coords=False, eval_mode=False):
         super(SlideDatasetMS, self).__init__(annotations, splits, set_type, eval_mode)
         # print('ann len in', len(self.curr_annotations))
         self.curr_annotations['case_id'] = normalize_case_id(self.curr_annotations['case_id'])
@@ -145,7 +145,7 @@ class SlideDatasetMS(GenericDataset):
         self.split_ann_10x = split_ann_10x.merge(self.curr_annotations, how='inner', on='case_id')
         self.split_ann_20x = split_ann_20x.merge(self.curr_annotations, how='inner', on='case_id')
         self.label = label_col
-        self.pos_enc = pos_enc
+        self.use_coords = use_coords
         # print(self.split_ann)
 
     def __len__(self):
@@ -169,7 +169,7 @@ class SlideDatasetMS(GenericDataset):
         label = self.split_ann_20x[self.label].iloc[idx]
 
         # print(img_id)
-        if self.pos_enc:
+        if self.use_coords:
             return [[img_5x, img_10x, img_20x], [coords_5x, coords_10x, coords_20x]], label, img_id
         else:
             return [img_5x, img_10x, img_20x], label, img_id
@@ -182,7 +182,7 @@ class SlideDatasetMS(GenericDataset):
         return self.split_ann_20x[self.label].values.tolist()
 
 class SlideSurvDataset(GenericDataset):
-    def __init__(self, annotations, slides_root, splits, label_col, set_type, pos_enc=False, eval_mode=False):
+    def __init__(self, annotations, slides_root, splits, label_col, set_type, use_coords=False, eval_mode=False):
         super(SlideSurvDataset, self).__init__(annotations, splits, set_type, eval_mode)
         self.curr_annotations['case_id'] = normalize_case_id(self.curr_annotations['case_id'])
         # print('curr ann', len(self.curr_annotations))
@@ -190,7 +190,7 @@ class SlideSurvDataset(GenericDataset):
         # print('split ann', len(split_ann))
         self.split_ann = split_ann.merge(self.curr_annotations, how='inner', on='case_id')
         self.label = label_col
-        self.pos_enc = pos_enc
+        self.use_coords = use_coords
         # print(self.split_ann)
 
     def __len__(self):
@@ -206,7 +206,7 @@ class SlideSurvDataset(GenericDataset):
         censorship = self.split_ann['censorship'].iloc[idx]
 
         # print(img_id)
-        if self.pos_enc:
+        if self.use_coords:
             # coords = coords[torch.randperm(coords.size(0))]
             return (img, coords), label, img_id, surv_month, censorship
         else:
@@ -220,7 +220,7 @@ class SlideSurvDataset(GenericDataset):
         return self.split_ann[self.label].values.tolist()
 
 class SlideSurvDatasetMS(GenericDataset):
-    def __init__(self, annotations, slides_root, splits, label_col, set_type, pos_enc=False, eval_mode=False):
+    def __init__(self, annotations, slides_root, splits, label_col, set_type, use_coords=False, eval_mode=False):
         super(SlideSurvDatasetMS, self).__init__(annotations, splits, set_type, eval_mode)
         self.curr_annotations['case_id'] = normalize_case_id(self.curr_annotations['case_id'])
         # print('curr ann', len(self.curr_annotations))
@@ -233,7 +233,7 @@ class SlideSurvDatasetMS(GenericDataset):
         self.split_ann_10x = split_ann_10x.merge(self.curr_annotations, how='inner', on='case_id')
         self.split_ann_20x = split_ann_20x.merge(self.curr_annotations, how='inner', on='case_id')
         self.label = label_col
-        self.pos_enc = pos_enc
+        self.use_coords = use_coords
         # print(self.split_ann)
 
     def __len__(self):
@@ -260,7 +260,7 @@ class SlideSurvDatasetMS(GenericDataset):
         # print(label)
 
         # print(img_id)
-        if self.pos_enc:
+        if self.use_coords:
             return [[img_5x, img_10x, img_20x], [coords_5x, coords_10x, coords_20x]], label, img_id, surv_month, censorship
         else:
             return [img_5x, img_10x, img_20x], label, img_id, surv_month, censorship

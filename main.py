@@ -45,8 +45,8 @@ parser.add_argument('--fov', default="3072, 2048, 1024", type=str,
                          'A 20x tile spans 512 units, so 1024 = true 10x, '
                          '2048 = true 5x, 3072 = 3.33x. The default is the '
                          'configuration reported in the paper.')
-parser.add_argument('--pos_enc', default=False, action='store_true', help='use positional encoding')
-parser.add_argument('--pos_enc_2d', default=False, action='store_true', help='use 2d positional encoding')
+parser.add_argument('--use_coords', default=False, action='store_true',
+                    help='load patch coordinates alongside features; required by every *_mspn arch')
 parser.add_argument('--early_stopping', default=True, action='store_true', help='early stopping')
 # gradient accumulation
 parser.add_argument('--gc', type=int, default=1, help='Number of epoch for cumulative gradient. Set to 1 to disable l1 reg.')
@@ -58,7 +58,7 @@ args = parser.parse_args()
 # setup CUDA
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 arch = args.arch
-pos_enc = args.pos_enc
+use_coords = args.use_coords
 # print(args.fov)
 # fov = [int(each) for each in args.fov]
 # print(fov)
@@ -91,9 +91,6 @@ elif task == 'pr':
 elif task == 'c16':
     classes = ['Normal', 'Tumor']
     label_col = 'label'
-elif task == 'nsclc':
-    classes = ['LUAD', 'LUSC']
-    label_col = 'label'
 elif task == 'her2':
     classes = ['Negative', 'Positive']
     label_col = 'labels_her2_2cls'
@@ -106,11 +103,8 @@ elif task == 'rcc':
 elif task == 'thrb':
     classes = ['Low', 'High']
     label_col = 'label'
-elif task == 'crc':
-    classes = ['Normal', 'Tumor']
-    label_col = 'label'
 else:
-    print(f'Unsupported Receptor: {task}.')
+    print(f'Unknown task: {task}.')
     raise NotImplementedError
 
 # automatic cross-validation
@@ -138,9 +132,9 @@ auc_metrics = {'val': [], 'test': [], 'eval': [], 'val_ci': [], 'eval_ci':[]}
 
 # dataset and dataloader
 def get_data(curr_split, data_mode):
-    train_set = SlideDataset(annotations, data_dir, curr_split, label_col=label_col, set_type='train', pos_enc=pos_enc, eval_mode=False, data_mode=data_mode)
-    val_set = SlideDataset(annotations, data_dir, curr_split, label_col=label_col, set_type='val', pos_enc=pos_enc, eval_mode=False, data_mode=data_mode)
-    test_set = SlideDataset(annotations, data_dir, curr_split, label_col=label_col, set_type='test', pos_enc=pos_enc, eval_mode=False, data_mode=data_mode)
+    train_set = SlideDataset(annotations, data_dir, curr_split, label_col=label_col, set_type='train', use_coords=use_coords, eval_mode=False, data_mode=data_mode)
+    val_set = SlideDataset(annotations, data_dir, curr_split, label_col=label_col, set_type='val', use_coords=use_coords, eval_mode=False, data_mode=data_mode)
+    test_set = SlideDataset(annotations, data_dir, curr_split, label_col=label_col, set_type='test', use_coords=use_coords, eval_mode=False, data_mode=data_mode)
     return train_set, val_set, test_set
 
 
@@ -182,20 +176,20 @@ if __name__ == '__main__':
             i_classifier = FCLayer(args.in_dim, 512, cls_num)
             b_classifier = BClassifier(input_size=512)
             model = DSMIL(in_channels=args.in_dim, n_classes=cls_num, i_classifier=i_classifier, b_classifier=b_classifier, reduction_size=512)
-        # --- MSPN. Every *_mspn arch REQUIRES --pos_enc: that flag is what makes
+        # --- MSPN. Every *_mspn arch REQUIRES --use_coords: that flag is what makes
         # SlideDataset return (features, coords), and MSPN cannot bin patches
         # into a lattice without coordinates.
-        elif arch == 'abmil_mspn' and pos_enc != False:
+        elif arch == 'abmil_mspn' and use_coords != False:
             model = ABMIL_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=fov)
-        elif arch == 'dsmil_mspn' and pos_enc != False:
+        elif arch == 'dsmil_mspn' and use_coords != False:
             # 512, not args.in_dim: the wrapper's own front end has already
             # reduced the features before the instance classifier sees them.
             i_classifier = FCLayer(512, 512, cls_num)
             b_classifier = BClassifier(input_size=512)
             model = DSMIL_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=fov, i_classifier=i_classifier, b_classifier=b_classifier)
-        elif arch == 'clamsb_mspn' and pos_enc != False:
+        elif arch == 'clamsb_mspn' and use_coords != False:
             model = CLAMSB_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=fov)
-        elif arch == 'clammb_mspn' and pos_enc != False:
+        elif arch == 'clammb_mspn' and use_coords != False:
             model = CLAMMB_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=fov)
         else:
             raise NotImplementedError
@@ -356,7 +350,7 @@ if __name__ == '__main__':
     auc_metrics_df.to_csv(os.path.join(res_dir, 'auc_metrics.csv'))
 
 
-# python main.py --arch abmil_mspn --pos_enc \
+# python main.py --arch abmil_mspn --use_coords \
 #   --ann annotations/annotations_er.csv --split_dir annotations/5fold_splits_er/ \
 #   --data_dir /path/to/conch_feats/ --res_root results --task er \
 #   --n_classes 2 --in_dim 512 --lr 2e-4 --gc 32 --epochs 150 --scheduler CALR

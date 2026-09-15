@@ -82,7 +82,7 @@ where `<backbone>` is whatever you pass to `--data_bb`. One cohort per
 reading the wrong cohort.
 
 ```bash
-python main.py --arch abmil_mspn --pos_enc \
+python main.py --arch abmil_mspn --use_coords \
     --ann ANNOTATION_CSV --split_dir SPLIT_DIR --data_dir FEAT_DIR \
     --res_root RES_DIR --task TASK --n_classes 2 --in_dim 512 \
     --lr 2e-4 --gc 32 --epochs 150 --scheduler CALR --early_stopping
@@ -101,7 +101,7 @@ python main.py --arch abmil_mspn --pos_enc \
 
 ### Flags that matter
 
-- **`--pos_enc` is mandatory for every `*_mspn` arch.** It is what makes the
+- **`--use_coords` is mandatory for every `*_mspn` arch.** It is what makes the
   dataset return `(features, coords)`; without coordinates MSPN cannot build
   its lattice, and the arch dispatch falls through to `NotImplementedError`.
 - **`--fov`** sets MSPN's fields of view in slide pixels. A 20× tile spans 512

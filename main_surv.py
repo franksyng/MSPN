@@ -46,8 +46,8 @@ parser.add_argument('--fov', default="3072, 2048, 1024", type=str,
                          'A 20x tile spans 512 units, so 1024 = true 10x, '
                          '2048 = true 5x, 3072 = 3.33x. The default is the '
                          'configuration reported in the paper.')
-parser.add_argument('--pos_enc', default=False, action='store_true', help='use positional encoding')
-parser.add_argument('--pos_enc_2d', default=False, action='store_true', help='use 2d positional encoding')
+parser.add_argument('--use_coords', default=False, action='store_true',
+                    help='load patch coordinates alongside features; required by every *_mspn arch')
 parser.add_argument('--early_stopping', default=True, action='store_true', help='early stopping')
 # gradient accumulation
 parser.add_argument('--gc', type=int, default=32, help='Number of epoch for cumulative gradient. Set to 1 to disable l1 reg.')
@@ -59,7 +59,7 @@ args = parser.parse_args()
 # setup CUDA
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 arch = args.arch
-pos_enc = args.pos_enc
+use_coords = args.use_coords
 fov = args.fov.split(',')
 fov = [int(each) for each in fov]
 # setup seed
@@ -75,29 +75,19 @@ if task == 'luad_surv':
     classes = ['0', '1', '2', '3']
     label_col = 'label'
 elif task == 'brca_surv':
-    # TCGA-BRCA survival. 1105 slides / 1036 patients; 64 patients contribute
-    # more than one slide, so its splits are PATIENT-LEVEL (verified: no
-    # patient appears in two sets of any fold). Heavily censored -- only 150
-    # events in 1105 cases (86% censored), so expect wide c-index intervals.
     classes = ['0', '1', '2', '3']
     label_col = 'label'
 elif task == 'blca_surv':
-    # TCGA-BLCA. 452 slides / 381 patients; 26 patients contribute more than one
-    # slide, which is why its splits are patient-level.
     classes = ['0', '1', '2', '3']
     label_col = 'label'
 elif task == 'kirc_surv':
-    # KIRC is the clear-cell subset of the RCC cohort, so point --data_dir at
-    # the RCC features: KIRP and KICH slides sit in the same directory.
-    # `load_slide_data` matches by substring of case_id and every KIRC case_id
-    # ends in `_kirc`, so only the KIRC slides are picked up.
     classes = ['0', '1', '2', '3']
     label_col = 'label'
 elif task == 'surgen_surv':
     classes = ['0', '1', '2', '3']
     label_col = 'label'
 else:
-    print(f'Unsupported Receptor: {task}.')
+    print(f'Unknown task: {task}.')
     raise NotImplementedError
 
 # automatic cross-validation
@@ -119,9 +109,9 @@ cindex_metrics = {'train': [], 'val': [], 'test': [], 'eval': []}
 
 # dataset and dataloader
 def get_data(curr_split):
-    train_set = SlideSurvDataset(annotations, data_dir, curr_split, label_col=label_col, set_type='train', pos_enc=pos_enc, eval_mode=False)
-    val_set = SlideSurvDataset(annotations, data_dir, curr_split, label_col=label_col, set_type='val', pos_enc=pos_enc, eval_mode=False)
-    test_set = SlideSurvDataset(annotations, data_dir, curr_split, label_col=label_col, set_type='test', pos_enc=pos_enc, eval_mode=False)
+    train_set = SlideSurvDataset(annotations, data_dir, curr_split, label_col=label_col, set_type='train', use_coords=use_coords, eval_mode=False)
+    val_set = SlideSurvDataset(annotations, data_dir, curr_split, label_col=label_col, set_type='val', use_coords=use_coords, eval_mode=False)
+    test_set = SlideSurvDataset(annotations, data_dir, curr_split, label_col=label_col, set_type='test', use_coords=use_coords, eval_mode=False)
     return train_set, val_set, test_set
 
 
@@ -158,20 +148,20 @@ if __name__ == '__main__':
             i_classifier = FCLayer(args.in_dim, 512, cls_num)
             b_classifier = BClassifier(input_size=512)
             model = DSMIL(in_channels=args.in_dim, n_classes=cls_num, i_classifier=i_classifier, b_classifier=b_classifier, surv=True, reduction_size=512)
-        # --- MSPN. Every *_mspn arch REQUIRES --pos_enc: that flag is what makes
+        # --- MSPN. Every *_mspn arch REQUIRES --use_coords: that flag is what makes
         # SlideDataset return (features, coords), and MSPN cannot bin patches
         # into a lattice without coordinates.
-        elif arch == 'abmil_mspn' and pos_enc != False:
+        elif arch == 'abmil_mspn' and use_coords != False:
             model = ABMIL_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=fov)
-        elif arch == 'dsmil_mspn' and pos_enc != False:
+        elif arch == 'dsmil_mspn' and use_coords != False:
             # 512, not args.in_dim: the wrapper's own front end has already
             # reduced the features before the instance classifier sees them.
             i_classifier = FCLayer(512, 512, cls_num)
             b_classifier = BClassifier(input_size=512)
             model = DSMIL_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=fov, i_classifier=i_classifier, b_classifier=b_classifier, surv=True)
-        elif arch == 'clamsb_mspn' and pos_enc != False:
+        elif arch == 'clamsb_mspn' and use_coords != False:
             model = CLAMSB_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=fov)
-        elif arch == 'clammb_mspn' and pos_enc != False:
+        elif arch == 'clammb_mspn' and use_coords != False:
             model = CLAMMB_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=fov)
         else:
             raise NotImplementedError
