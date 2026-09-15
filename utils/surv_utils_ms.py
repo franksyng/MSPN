@@ -2,19 +2,16 @@
 # basic imports
 import json
 import numpy as np
-from sklearn import metrics
 from torch import device
 from tqdm import tqdm
 import numpy as np
-from copy import deepcopy
 from sksurv.metrics import concordance_index_censored
 
 # torch
 import torch
-import torch.nn as nn
 
 from utils.universal_utils import load_loop_logs
-from utils.metric_utils import print_cnf_matrix, find_pred_score_binary, eer_threshold, MetricLogger
+from utils.metric_utils import MetricLogger
 
 def slide_level_loop_surv_ms(model, device, optimizer, criterion, gc, loader, case_len, reg_fn=None, l1_reg=None, phase=None, mdl_name='None'):
     loop_logger = load_loop_logs(None, phase)
@@ -75,15 +72,11 @@ def slide_level_loop_surv_ms(model, device, optimizer, criterion, gc, loader, ca
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(logits=output, y=target, c=censorship) + 0.5*inst_loss
                     elif 'hag' in mdl_name:
-                        # HAG-MIL returns a DICT and computes its own loss with
-                        # F.cross_entropy, which is undefined for censored data.
-                        # For survival we take the bag logits and apply the NLL
-                        # criterion, DROPPING its auxiliary hierarchical and
-                        # patch-level CE losses. That is a necessary adaptation,
-                        # not the published method -- state it when reporting.
-                        # The classification sibling (utils/bag_utils_ms.py) has
-                        # a 'hag' branch; this one was never mirrored, so every
-                        # HAG-MIL survival run failed on `output, _ = mdl_out`.
+                        # HAG-MIL computes its own CE loss, undefined for
+                        # censored data. Here its bag logits go through the NLL
+                        # criterion and its auxiliary hierarchical and
+                        # patch-level CE losses are dropped: an adaptation, not
+                        # the published method.
                         mdl_out = model(data)
                         output = mdl_out['logits'] if isinstance(mdl_out, dict) else mdl_out[0]
                         if output.dim() == 1:      # HAG-MIL emits [n_classes],
@@ -177,15 +170,6 @@ def evaluate_surv_ms(model, device, criterion, test_loader, mdl_name='None'):
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(logits=output, y=target, c=censorship) + 0.5*inst_loss
                     elif 'hag' in mdl_name:
-                        # HAG-MIL returns a DICT and computes its own loss with
-                        # F.cross_entropy, which is undefined for censored data.
-                        # For survival we take the bag logits and apply the NLL
-                        # criterion, DROPPING its auxiliary hierarchical and
-                        # patch-level CE losses. That is a necessary adaptation,
-                        # not the published method -- state it when reporting.
-                        # The classification sibling (utils/bag_utils_ms.py) has
-                        # a 'hag' branch; this one was never mirrored, so every
-                        # HAG-MIL survival run failed on `output, _ = mdl_out`.
                         mdl_out = model(data)
                         output = mdl_out['logits'] if isinstance(mdl_out, dict) else mdl_out[0]
                         if output.dim() == 1:      # HAG-MIL emits [n_classes],
@@ -239,25 +223,6 @@ class NLLSurvLoss(object):
     def __call__(self, logits, y, c):
         return nll_loss(logits=logits, y=y.unsqueeze(dim=1), c=c.unsqueeze(dim=1), alpha=self.alpha, eps=self.eps)
         
-# def nll_loss(logits, y, c, alpha=0.0, eps=1e-7):
-#     batch_size = len(Y)
-#     Y = Y.view(batch_size, 1)  # ground truth bin, 1,2,...,k
-#     c = c.view(batch_size, 1).float()  # censorship status, 0 or 1
-#     if S is None:
-#         S = torch.cumprod(1 - hazards, dim=1)  # surival is cumulative product of 1 - hazards
-#     # without padding, S(0) = S[0], h(0) = h[0]
-#     S_padded = torch.cat([torch.ones_like(c), S], 1)  # S(-1) = 0, all patients are alive from (-inf, 0) by definition
-#     # after padding, S(0) = S[1], S(1) = S[2], etc, h(0) = h[0]
-#     # h[y] = h(1)
-#     # S[1] = S(1)
-#     uncensored_loss = -(1 - c) * (
-#         torch.log(torch.gather(S_padded, 1, Y).clamp(min=eps)) + torch.log(torch.gather(hazards, 1, Y).clamp(min=eps))
-#     )
-#     censored_loss = -c * torch.log(torch.gather(S_padded, 1, Y + 1).clamp(min=eps))
-#     neg_l = censored_loss + uncensored_loss
-#     loss = (1 - alpha) * neg_l + alpha * uncensored_loss
-#     loss = loss.mean()
-#     return loss
 
 def nll_loss(logits, y, c, alpha=0.0, eps=1e-7):
     y = y.type(torch.int64)
@@ -273,9 +238,6 @@ def nll_loss(logits, y, c, alpha=0.0, eps=1e-7):
     s_prev = torch.gather(S_padded, dim=1, index=y).clamp(min=eps)
     h_this = torch.gather(hazards, dim=1, index=y).clamp(min=eps)
     s_this = torch.gather(S_padded, dim=1, index=y+1).clamp(min=eps)
-    # print('s_prev.s_prev', s_prev.shape, s_prev)
-    # print('h_this.shape', h_this.shape, h_this)
-    # print('s_this.shape', s_this.shape, s_this)
 
     uncensored_loss = -(1 - c) * (torch.log(s_prev) + torch.log(h_this))
     censored_loss = - c * torch.log(s_this)

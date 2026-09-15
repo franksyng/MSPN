@@ -1,5 +1,4 @@
-from typing import Any, Callable, List, Optional, Type, Union
-import torch
+from typing import Callable, List, Optional, Type, Union
 import torch.nn as nn
 from torch import Tensor
 from torchvision.models import ResNet18_Weights, ResNet50_Weights

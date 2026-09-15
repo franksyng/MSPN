@@ -1,21 +1,20 @@
 import argparse
 import torch
-import torch.nn as nn
 import torch.optim as optim
 import os
 import pandas as pd
 import numpy as np
 from utils.universal_utils import setup_seed_surv, create_dir, L1Reg, Lookahead
-from utils.metric_utils import eer_threshold, plot_roc_curves, save_cnf_matrix, compare_metrics
+from utils.metric_utils import compare_metrics
 from utils.core_utils import train_baseline_surv
 from utils.surv_utils_ms import evaluate_surv_ms
 from datasets import SlideSurvDatasetMS
 from torch.utils.data import DataLoader
 from models.clam import CLAM_MB_MS, CLAM_SB_MS, CLAM_MB_MSCat, CLAM_SB_MSCat
-from models.pretrained_mil import build_pretrained_abmil, encoder_of
-from models.abmil import ABMILMS, ABMILMSCat, ABMILPreMS, ABMILPreMSCat, ABMILPretrained
+from models.abmil import ABMILMS, ABMILMSCat
 from models.dsmil import FCLayer, BClassifier, DSMILMS, DSMILMSCat
-from sklearn.utils.class_weight import compute_class_weight
+from models.hag_mil import HAGMIL
+from models.zoommil import ZoomMIL
 from utils.surv_utils import NLLSurvLoss, save_surv_predictions
 
 parser = argparse.ArgumentParser('mspn')
@@ -63,9 +62,7 @@ split_dir = args.split_dir
 task = args.task
 cls_num = args.n_classes
 
-# Root holding the extracted features. Expected layout:
-#   <DATA_ROOT>/<backbone>_feats/{5x,10x,20x}/*.h5
-# where <backbone> is --data_bb. Point this at your own features.
+# <DATA_ROOT>/<backbone>_feats/{5x,10x,20x}/*.h5, <backbone> = --data_bb
 DATA_ROOT = 'your data path'
 
 data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/5x/'
@@ -135,8 +132,7 @@ if __name__ == '__main__':
         create_dir(ckpt_dir)  # if not exist, create one
 
         # prepare model
-        # Multi-scale BASELINES: the 5x/10x/20x triplet that MSPN is compared
-        # against. `*ms` is cross-scale attention, `*mscat` is concatenation.
+        # *ms is cross-scale attention, *mscat is concatenation
         if arch == 'clammbms':
             model = CLAM_MB_MS(n_classes=cls_num, embed_dim=args.in_dim, mil_hidden_2=64)
         elif arch == 'clamsbms':
@@ -149,14 +145,6 @@ if __name__ == '__main__':
             model = ABMILMS(in_channels=args.in_dim, n_classes=cls_num)
         elif arch == 'abmilmscat':
             model = ABMILMSCat(in_channels=args.in_dim, n_classes=cls_num)
-        elif arch == 'abmilprems':
-            model = ABMILPreMS(in_channels=args.in_dim, n_classes=cls_num,
-                            abmil_head=build_pretrained_abmil(
-                                args.in_dim, cls_num, encoder_of(args)))
-        elif arch == 'abmilpremscat':
-            model = ABMILPreMSCat(in_channels=args.in_dim, n_classes=cls_num,
-                            abmil_head=build_pretrained_abmil(
-                                args.in_dim, cls_num, encoder_of(args)))
         elif arch == 'dsmilms':
             i_classifier = FCLayer(args.in_dim, 512, cls_num)
             b_classifier = BClassifier(input_size=512)
@@ -165,6 +153,14 @@ if __name__ == '__main__':
             i_classifier = FCLayer(args.in_dim, 512, cls_num)
             b_classifier = BClassifier(input_size=512)
             model = DSMILMSCat(n_classes=cls_num, i_classifier=i_classifier, b_classifier=b_classifier, mil_hidden_1=512)
+        elif arch == 'hagmil':
+            model = HAGMIL(in_dim=args.in_dim,
+                           hidden_dims=[1024, 1536, 512, 1024],
+                           n_classes=cls_num,
+                           num_levels=3,
+                           k_per_level=[200, 800])
+        elif arch == 'zoommil':
+            model = ZoomMIL(in_feat_dim=args.in_dim, n_cls=cls_num)
         else:
             raise NotImplementedError
         # put model on one or multiple GPUs

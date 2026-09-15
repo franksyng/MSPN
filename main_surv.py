@@ -1,23 +1,27 @@
 import argparse
 import torch
-import torch.nn as nn
 import torch.optim as optim
 import os
 import pandas as pd
 import numpy as np
 from utils.universal_utils import setup_seed_surv, create_dir, L1Reg, Lookahead
-from utils.metric_utils import eer_threshold, plot_roc_curves, save_cnf_matrix, compare_metrics
+from utils.metric_utils import compare_metrics
 from utils.core_utils import train_baseline_surv
 from utils.surv_utils import evaluate_surv, save_surv_predictions
 from datasets import SlideSurvDataset
 from torch.utils.data import DataLoader
 from models.clam import CLAM_SB, CLAM_MB
-from models.baseline import MaxPool, MeanPool
+from models.maxpool import MaxPool
+from models.meanpool import MeanPool
 from models.abmil import ABMIL
 from models.dsmil import FCLayer, BClassifier, DSMIL
 from models.TransMIL import TransMIL
 from models.mspn import ABMIL_MSPN, DSMIL_MSPN, CLAMSB_MSPN, CLAMMB_MSPN
-from sklearn.utils.class_weight import compute_class_weight
+from models.camil import build_camil
+from models.patchgcn import build_patchgcn
+from models.h2mil import build_h2mil
+from models.smmil import SmMIL
+from models.hipt import HIPT
 from utils.surv_utils import NLLSurvLoss
 
 parser = argparse.ArgumentParser('mspn')
@@ -46,6 +50,8 @@ parser.add_argument('--fov', default="3072, 2048, 1024", type=str,
                          'A 20x tile spans 512 units, so 1024 = true 10x, '
                          '2048 = true 5x, 3072 = 3.33x. The default is the '
                          'configuration reported in the paper.')
+parser.add_argument('--hipt_ckpt', type=str, default=None,
+                    help='path to the vit4k_xs DINO checkpoint; required by --arch hipt')
 parser.add_argument('--use_coords', default=False, action='store_true',
                     help='load patch coordinates alongside features; required by every *_mspn arch')
 parser.add_argument('--early_stopping', default=True, action='store_true', help='early stopping')
@@ -148,14 +154,11 @@ if __name__ == '__main__':
             i_classifier = FCLayer(args.in_dim, 512, cls_num)
             b_classifier = BClassifier(input_size=512)
             model = DSMIL(in_channels=args.in_dim, n_classes=cls_num, i_classifier=i_classifier, b_classifier=b_classifier, surv=True, reduction_size=512)
-        # --- MSPN. Every *_mspn arch REQUIRES --use_coords: that flag is what makes
-        # SlideDataset return (features, coords), and MSPN cannot bin patches
-        # into a lattice without coordinates.
+        # every *_mspn arch needs --use_coords; MSPN bins patches by coordinate
         elif arch == 'abmil_mspn' and use_coords != False:
             model = ABMIL_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=fov)
         elif arch == 'dsmil_mspn' and use_coords != False:
-            # 512, not args.in_dim: the wrapper's own front end has already
-            # reduced the features before the instance classifier sees them.
+            # 512, not args.in_dim: the wrapper's front end already reduced
             i_classifier = FCLayer(512, 512, cls_num)
             b_classifier = BClassifier(input_size=512)
             model = DSMIL_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=fov, i_classifier=i_classifier, b_classifier=b_classifier, surv=True)
@@ -163,6 +166,21 @@ if __name__ == '__main__':
             model = CLAMSB_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=fov)
         elif arch == 'clammb_mspn' and use_coords != False:
             model = CLAMMB_MSPN(in_channels=args.in_dim, n_classes=cls_num, view_scales=fov)
+        elif arch == 'camil' and use_coords != False:
+            model = build_camil(args.in_dim, cls_num)
+        elif arch == 'patchgcn' and use_coords != False:
+            model = build_patchgcn(args.in_dim, cls_num)
+        elif arch == 'h2mil' and use_coords != False:
+            model = build_h2mil(args.in_dim, cls_num)
+        elif arch == 'smmil' and use_coords != False:
+            model = SmMIL(in_dim=args.in_dim, emb_dim=512, num_classes=cls_num, sm_where='early')
+        elif arch == 'hipt':
+            # HIPT takes a (w, h) grid, not coordinates
+            if not args.hipt_ckpt:
+                raise ValueError('--arch hipt requires --hipt_ckpt, the path to '
+                                 'the vit4k_xs DINO checkpoint')
+            model = HIPT(input_dim=args.in_dim, n_classes=cls_num,
+                         pretrained_vit4k=args.hipt_ckpt)
         else:
             raise NotImplementedError
         # put model on one or multiple GPUs

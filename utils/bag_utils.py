@@ -1,19 +1,15 @@
 
 # basic imports
 import numpy as np
-from sklearn import metrics
 from torch import device
 from tqdm import tqdm
 import numpy as np
-from copy import deepcopy
 
 # torch
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
 from utils.universal_utils import load_loop_logs
-from utils.metric_utils import print_cnf_matrix, find_pred_score_binary, eer_threshold, find_best_threshold_youden, MetricLogger
+from utils.metric_utils import print_cnf_matrix, find_pred_score_binary, find_best_threshold_youden, MetricLogger
 
 
 def _mspn_aux(model, mdl_name):
@@ -269,7 +265,5 @@ def evaluate(model, device, criterion, test_loader, cls_num, binary, mdl_name='N
         logs['eval_pred_data']['y_pred'] = eval_logger.y_probas
         logs['eval_cnf_matrix'] = eval_logger.get_cnf_matrix()
         logs['eval_f1'] = eval_logger.get_f1()
-        # logs['eval_recall'] = eval_logger.get_recall()
-        # precision = eval_logger.get_precision()
         print(f"[core] eval - auc: {logs['eval_auc']:.4f} 95% CI ({lower:.4f}-{upper:.4f}), f1: {logs['eval_f1']:.4f}")
         return logs

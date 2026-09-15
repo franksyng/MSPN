@@ -1,22 +1,16 @@
 # basic imports
-import numpy as np
-from sklearn import metrics
 from torch import device
-from tqdm import tqdm
-import numpy as np
 from copy import deepcopy
 
 # torch
-import torch
-import torch.nn as nn
 
 # inner imports
-from utils.universal_utils import load_summary_logs, load_loop_logs, logging_epoch, print_epoch_summary
+from utils.universal_utils import load_summary_logs, logging_epoch, print_epoch_summary
 from utils.metric_utils import MetricLogger
 from utils.bag_utils import slide_level_loop
 from utils.bag_utils_ms import slide_level_loop_ms
-from utils.surv_utils import slide_level_loop_surv, evaluate_surv
-from utils.surv_utils_ms import slide_level_loop_surv_ms, evaluate_surv_ms
+from utils.surv_utils import slide_level_loop_surv
+from utils.surv_utils_ms import slide_level_loop_surv_ms
 
 
 def _swa_average(states):

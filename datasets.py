@@ -8,8 +8,6 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from tqdm import tqdm
-from sklearn import preprocessing
 
 def normalize_case_id(series):
     # Convert to pandas StringDtype, trim, and strip trailing ".0"
@@ -271,29 +269,4 @@ class SlideSurvDatasetMS(GenericDataset):
 
     def get_label_list(self):
         return self.split_ann_20x[self.label].values.tolist()
-
-class PatchDataset(Dataset):
-    def __init__(self, data, targets, coords=None):
-        self.data = data
-        # print('data shape', self.data.shape)
-        if coords != None:
-            self.coords = coords
-        else:
-            self.coords = None
-        self.targets = targets
-    
-    def __len__(self):
-        return self.data.shape[0]
-
-    def __getitem__(self, idx):
-        # print(self.targets.shape)
-        img = self.data[idx, :] # [B, D]
-        target = self.targets[:,idx] # [1, B]
-        # print(img.shape)
-        # print(target.shape)
-        if self.coords != None:
-            coords = self.coords[idx, :].unsqueeze(0) # [1, B, 2]
-            return img, coords, target
-        else:
-            return img, target
 
