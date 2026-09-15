@@ -71,12 +71,15 @@ multi-scale scripts instead compose their three paths per task, so set
 out as
 
 ```
-<DATA_ROOT>/<backbone>_feats/<cohort>_256_{5x,10x,20x}_feats/*.h5
+<DATA_ROOT>/<backbone>_feats/5x/*.h5
+<DATA_ROOT>/<backbone>_feats/10x/*.h5
+<DATA_ROOT>/<backbone>_feats/20x/*.h5
 ```
 
-where `<backbone>` is whatever you pass to `--data_bb`. Every path argument
-ships with the placeholder default `your data path`, so a run that forgets one
-fails immediately rather than reading the wrong cohort.
+where `<backbone>` is whatever you pass to `--data_bb`. One cohort per
+`DATA_ROOT`. Every path argument ships with the placeholder default
+`your data path`, so a run that forgets one fails immediately rather than
+reading the wrong cohort.
 
 ```bash
 python main.py --arch abmil_mspn --pos_enc \

@@ -72,55 +72,38 @@ else:
     binary = False
 
 # Root holding the extracted features. Expected layout:
-#   <DATA_ROOT>/<backbone>_feats/<cohort>_256_{5x,10x,20x}_feats/*.h5
+#   <DATA_ROOT>/<backbone>_feats/{5x,10x,20x}/*.h5
 # where <backbone> is --data_bb. Point this at your own features.
 DATA_ROOT = 'your data path'
+
+data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/5x/'
+data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/10x/'
+data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/20x/'
 
 if task == 'er':
     classes = ['ER-', 'ER+']
     label_col = 'labels_er_2cls'
-    data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/leica_1st_he_256_5x_feats/'
-    data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/leica_1st_he_256_10x_feats/'
-    data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/leica_1st_he_256_20x_feats/'
 elif task == 'pr':
     classes = ['PR-', 'PR+']
     label_col = 'labels_pr_2cls'
-    data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/leica_1st_he_256_5x_feats/'
-    data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/leica_1st_he_256_10x_feats/'
-    data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/leica_1st_he_256_20x_feats/'
 elif task == 'c16':
     classes = ['Normal', 'Tumor']
     label_col = 'label'
-    data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/c16_256_5x_feats/'
-    data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/c16_256_10x_feats/'
-    data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/c16_256_20x_feats/'
 elif task == 'nsclc':
     classes = ['LUAD', 'LUSC']
     label_col = 'label'
 elif task == 'her2':
     classes = ['Negative', 'Positive']
     label_col = 'labels_her2_2cls'
-    data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/leica_1st_he_256_5x_feats/'
-    data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/leica_1st_he_256_10x_feats/'
-    data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/leica_1st_he_256_20x_feats/'
 elif task == 'panda':
     classes = ['ISUP 0', 'ISUP 1', 'ISUP 2', 'ISUP 3', 'ISUP 4', 'ISUP 5']
     label_col = 'label'
-    data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/panda_256_5x_feats/'
-    data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/panda_256_10x_feats/'
-    data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/panda_256_20x_feats/'
 elif task == 'rcc':
     classes = ['KICH', 'KIRC', 'KIRP']
     label_col = 'label'
-    data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/rcc_256_5x_feats/'
-    data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/rcc_256_10x_feats/'
-    data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/rcc_256_20x_feats/'
 elif task == 'thrb':
     classes = ['Low', 'High']
     label_col = 'label'
-    data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/steatosite_256_5x_feats/'
-    data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/steatosite_256_10x_feats/'
-    data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/steatosite_256_20x_feats/'
 elif task == 'crc':
     classes = ['Normal', 'Tumor']
     label_col = 'label'

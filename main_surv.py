@@ -87,10 +87,10 @@ elif task == 'blca_surv':
     classes = ['0', '1', '2', '3']
     label_col = 'label'
 elif task == 'kirc_surv':
-    # KIRC = the clear-cell subset of the RCC cohort, so its features live in
-    # rcc_256_20x_feats alongside KIRP and KICH. `load_slide_data` matches by
-    # substring of case_id, and every KIRC case_id ends in `_kirc`, so only the
-    # 517 KIRC slides are picked up.
+    # KIRC is the clear-cell subset of the RCC cohort, so point --data_dir at
+    # the RCC features: KIRP and KICH slides sit in the same directory.
+    # `load_slide_data` matches by substring of case_id and every KIRC case_id
+    # ends in `_kirc`, so only the KIRC slides are picked up.
     classes = ['0', '1', '2', '3']
     label_col = 'label'
 elif task == 'surgen_surv':

@@ -62,45 +62,31 @@ split_dir = args.split_dir
 # data_dir = args.data_dir
 task = args.task
 cls_num = args.n_classes
+
 # Root holding the extracted features. Expected layout:
-#   <DATA_ROOT>/<backbone>_feats/<cohort>_256_{5x,10x,20x}_feats/*.h5
+#   <DATA_ROOT>/<backbone>_feats/{5x,10x,20x}/*.h5
 # where <backbone> is --data_bb. Point this at your own features.
 DATA_ROOT = 'your data path'
+
+data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/5x/'
+data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/10x/'
+data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/20x/'
 
 if task == 'luad_surv':
     classes = ['0', '1', '2', '3']
     label_col = 'label'
-    # 5x/10x now exist (527 slides each, 2026-08-31) and were rebuilt from the
-    # same corrected source as 20x: patch-count ratios are 0.255 and 0.066
-    # against the ideal 0.25/0.0625, and the 41 slides whose 20x magnification
-    # was fixed show the SAME ladder as the untouched ones.
-    data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/luad_256_5x_feats/'
-    data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/luad_256_10x_feats/'
-    data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/luad_256_20x_feats/'
 elif task == 'brca_surv':
     classes = ['0', '1', '2', '3']
     label_col = 'label'
-    data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/brca_256_5x_feats/'
-    data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/brca_256_10x_feats/'
-    data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/brca_256_20x_feats/'
 elif task == 'blca_surv':
     classes = ['0', '1', '2', '3']
     label_col = 'label'
-    data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/blca_256_5x_feats/'
-    data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/blca_256_10x_feats/'
-    data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/blca_256_20x_feats/'
 elif task == 'kirc_surv':
     classes = ['0', '1', '2', '3']
     label_col = 'label'
-    data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/rcc_256_5x_feats/'
-    data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/rcc_256_10x_feats/'
-    data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/rcc_256_20x_feats/'
 elif task == 'surgen_surv':
     classes = ['0', '1', '2', '3']
     label_col = 'label'
-    data_5x = f'{DATA_ROOT}/{args.data_bb}_feats/surgen_256_5x_feats/'
-    data_10x = f'{DATA_ROOT}/{args.data_bb}_feats/surgen_256_10x_feats/'
-    data_20x = f'{DATA_ROOT}/{args.data_bb}_feats/surgen_256_20x_feats/'
 else:
     print(f'Unsupported Receptor: {task}.')
     raise NotImplementedError
