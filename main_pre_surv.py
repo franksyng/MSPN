@@ -6,28 +6,31 @@ import os
 import pandas as pd
 import numpy as np
 from utils.universal_utils import setup_seed_surv, create_dir, L1Reg, Lookahead
-from utils.metric_utils import compare_metrics
+from utils.metric_utils import eer_threshold, plot_roc_curves, save_cnf_matrix, compare_metrics
 from utils.core_utils import train_baseline_surv
-from utils.surv_utils import evaluate_surv
+from utils.surv_utils import evaluate_surv, save_surv_predictions
 from datasets import SlideSurvDataset
 from torch.utils.data import DataLoader
+from models.pretrained_mil import build_pretrained_abmil, encoder_of
 from models.abmil import ABMILPretrained
-from utils.surv_utils import NLLSurvLoss
 from models.mspn_pre import ABMILMSPNPretrained
-from src.builder import create_model
+from sklearn.utils.class_weight import compute_class_weight
+from utils.surv_utils import NLLSurvLoss
 
-parser = argparse.ArgumentParser('pretrained_MIL_surv')
-parser.add_argument('--arch', default='amil', help='select model architecture.')
+parser = argparse.ArgumentParser('mspn')
+parser.add_argument('--arch', default='abmil', help='select model architecture.')
 parser.add_argument('--n_gpu', type=int, default=-1, help='Manually give gpu number')
 parser.add_argument('--in_dim', type=int, default=1024, help='input dim of embedding.')
 parser.add_argument('--n_classes', type=int, default=4, help='num of classes.')
 # Path and dataset params
-parser.add_argument('--ann', type=str, default='/path/to', help='Annotation file.')
+parser.add_argument('--ann', type=str, default='../annotations/annotations_luad_surv.csv', help='Annotation file.')
 parser.add_argument('--res_root', default='results', help='Result directory.')
-parser.add_argument('--split_dir', type=str, default='/path/to', help='Split directory')
+parser.add_argument('--split_dir', type=str, default='../annotations/5fold_splits_surv/', help='Split directory')
 parser.add_argument('--num_workers', type=int, default=0, help='Number of worker for dataloader')
-parser.add_argument('--data_dir', type=str, default='/path/to', help='Data directory.')
-parser.add_argument('--task', type=str, default='surgen_surv', choices=['surgen_surv'], help='Benchmarking task name')
+parser.add_argument('--data_dir', type=str, default='/media/frank/FlashVol/all_data/clean/rn50_feats/nsclc_256_20x_feats/', help='Data directory.')
+parser.add_argument('--task', type=str, default='luad_surv',
+                    choices=['luad_surv', 'surgen_surv', 'kirc_surv'],
+                    help='Benchmarking task name')  # kirc_surv added 2026-08-27
 
 # Optimiser params
 parser.add_argument('--opt', type=str, choices=['adam', 'adamw', 'sgd'], default='adamw')
@@ -37,6 +40,11 @@ parser.add_argument('--batch_size', type=int, default=1)
 parser.add_argument('--epochs', type=int, default=150, help='Expected training epoch number.')
 parser.add_argument('--lr', type=float, default=2e-4, help='Learning rate.')
 parser.add_argument('--weight_decay', type=float, default=1e-4, help='L2 reg for optimizer.')
+parser.add_argument('--fov', default="3072, 2048, 1024", type=str,
+                    help='MSPN fields of view in slide pixels, comma separated. '
+                         'A 20x tile spans 512 units, so 1024 = true 10x, '
+                         '2048 = true 5x, 3072 = 3.33x. The default is the '
+                         'configuration reported in the paper.')
 parser.add_argument('--pos_enc', default=False, action='store_true', help='use positional encoding')
 parser.add_argument('--pos_enc_2d', default=False, action='store_true', help='use 2d positional encoding')
 parser.add_argument('--early_stopping', default=True, action='store_true', help='early stopping')
@@ -51,6 +59,7 @@ args = parser.parse_args()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 arch = args.arch
 pos_enc = args.pos_enc
+fov = [int(v) for v in str(args.fov).split(',')]
 # setup seed
 setup_seed_surv(args.seed, device)
 
@@ -66,27 +75,27 @@ if task == 'luad_surv':
 elif task == 'surgen_surv':
     classes = ['0', '1', '2', '3']
     label_col = 'label'
+elif task == 'kirc_surv':
+    # KIRC slides live in the rcc feature dirs; splits are PATIENT level
+    classes = ['0', '1', '2', '3']
+    label_col = 'label'
 else:
-    print(f'Unsupported task: {task}.')
+    print(f'Unsupported Receptor: {task}.')
     raise NotImplementedError
 
 # automatic cross-validation
 splits = sorted(os.listdir(split_dir))  # sorted beginning from 0 to n split
 splits = [each for each in splits if each != '.DS_Store']  # partial dev env is macOS, remove influences
 # prepare result directory
-if arch == 'selfattn':
-    if args.pos_enc_2d:
-        res_name = (f"{arch}-2dpe_{task}_b{args.batch_size}_gc{args.gc}_"
-                            f"{args.opt}_e{args.epochs}_lr{args.lr}_"
-                            f"{args.loss_func}_{args.scheduler}")
-    else:
-        res_name = (f"{arch}-1dpe_{task}_b{args.batch_size}_gc{args.gc}_"
-                            f"{args.opt}_e{args.epochs}_lr{args.lr}_"
-                            f"{args.loss_func}_{args.scheduler}")
-else:
-    res_name = (f"{arch}_{task}_b{args.batch_size}_gc{args.gc}_"
-                        f"{args.opt}_e{args.epochs}_lr{args.lr}_"
-                        f"{args.loss_func}_{args.scheduler}")
+# The _s<seed> suffix is what keeps a seed sweep from overwriting the
+# seed-2024 result. main_rl*.py and main_rl_surv_ms.py already do this; this
+# script accepted --seed but ignored it in the path, so `--seed 7` silently
+# aimed at the SAME directory as the published run.
+_sfx = f"_s{args.seed}" if args.seed != 2024 else ""
+res_name = (f"{arch}_{task}_b{args.batch_size}_gc{args.gc}_"
+                    f"{args.opt}_e{args.epochs}_lr{args.lr}_"
+                    f"{args.loss_func}_{args.scheduler}"
+                    + (f"_s{args.seed}" if args.seed != 2024 else ""))
 res_dir = os.path.join(args.res_root, res_name)
 create_dir(args.res_root)  # if not exist, create one
 if args.debug == False:
@@ -122,23 +131,19 @@ if __name__ == '__main__':
 
         # prepare model
         if arch == 'abmilpre':
-            pre_model = create_model('abmil.base.uni_v2.pc108-24k', from_pretrained=True, num_classes=cls_num)
-            model = ABMILPretrained(in_dim=args.in_dim, num_classes=cls_num)
-        elif arch == 'abmil_mspn_pre' and pos_enc != False:
-            pre_model = create_model('abmil.base.uni_v2.pc108-24k', from_pretrained=True, num_classes=cls_num)
-            model = ABMILMSPNPretrained(in_dim=args.in_dim, num_classes=cls_num, view_scales=[1536, 2048, 3072]) # 1536, 2304, 3072
+            # One loader for every pretrained arm, which raises if nothing
+            # transfers. Building the pretrained model and then constructing a
+            # fresh head next to it trains a randomly-initialised network that
+            # is pretrained in name only.
+            model = build_pretrained_abmil(args.in_dim, cls_num, encoder_of(args))
+        elif arch == 'abmilpre_mspn' and pos_enc != False:
+            # 512, not args.in_dim: MSPN's own front end has already reduced
+            # the features before the pretrained body sees them.
+            model = ABMILMSPNPretrained(
+                in_channels=args.in_dim, n_classes=cls_num, view_scales=fov,
+                pretrained_head=build_pretrained_abmil(512, cls_num, encoder_of(args)))
         else:
             raise NotImplementedError
-
-        state = pre_model.state_dict()
-        for k,v in state.items():
-            print(k)
-        state = {k.removeprefix("model."): v for k, v in state.items()}
-        state = {k: v for k, v in state.items() if 'classifier' not in k and 'patch_embed' not in k}
-        missing_keys, unexpected_keys = model.load_state_dict(state, strict=False)
-        print("Missing keys:", missing_keys)
-        print("Unexpected keys:", unexpected_keys)
-        
         # put model on one or multiple GPUs
         if hasattr(model, 'relocate'):
             model.relocate(device, args.n_gpu)
@@ -181,6 +186,9 @@ if __name__ == '__main__':
         annotations = pd.read_csv(ann_path, dtype={'case_id': str})
         curr_split = pd.read_csv(split_path, dtype={'case_id': str})
         train_set, val_set, test_set = get_data(curr_split)
+        # curr_labels = train_set.get_label_list()
+        # class_weights = compute_class_weight(class_weight='balanced', classes=np.unique(curr_labels), y=np.array(curr_labels))
+        # class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device)
         if args.loss_func == 'nll_surv':
             criterion = NLLSurvLoss(alpha=0.15)
         else:
@@ -207,9 +215,31 @@ if __name__ == '__main__':
                 'test': logs['test_metrics'],    
             }
         }
+        # pred_details = [logs['train_pred_data'], logs['val_pred_data'], logs['test_pred_data'], eval_logs['eval_pred_data']]
+        # all_metrics, split_roc, split_cis, best_weight, cnf_matrices, pred_details, opt_th
 
         compare_metrics(all_metrics, split_res_dir)
+        # These two scripts never wrote per-slide predictions at all -- the
+        # whole details block below is commented out, so a run left only
+        # aggregate c-indices behind and nothing could be re-analysed without
+        # re-running inference. Added 2026-08-26 alongside the raw-logit fix.
+        pd.DataFrame(eval_logs['eval_pred_data']).to_csv(
+            os.path.join(split_res_dir, 'test_details.csv'))
+        save_surv_predictions(eval_logs['eval_pred_data'], split_res_dir)
+        # train_details_df = pd.DataFrame(pred_details[0])
+        # val_details_df = pd.DataFrame(pred_details[1])
+        # test_details_df = pd.DataFrame(pred_details[2])
+        # eval_details_df = pd.DataFrame(pred_details[3])
+        # train_details_df.to_csv(os.path.join(split_res_dir, 'train_details.csv'))
+        # val_details_df.to_csv(os.path.join(split_res_dir, 'val_details.csv'))
+        # test_details_df.to_csv(os.path.join(split_res_dir, 'test_details.csv'))
+
+        
+        # split_metics_auc_df = pd.DataFrame(dict({'train': all_metrics['auc']['train'], 'val': all_metrics['auc']['val'], 'test': all_metrics['auc']['test']}))
+        # split_metics_f1_df = pd.DataFrame(dict({'train': all_metrics['f1']['train'], 'val': all_metrics['f1']['val'], 'test': all_metrics['f1']['test']}))
         split_metics_df = pd.DataFrame({'val': logs['val_metrics'], 'test': logs['test_metrics']})
+        # split_metics_auc_df.to_csv(os.path.join(split_res_dir, 'split_auc_metrics.csv'))
+        # split_metics_f1_df.to_csv(os.path.join(split_res_dir, 'split_f1_metrics.csv'))
         split_metics_df.to_csv(os.path.join(split_res_dir, 'split_cindex.csv'))
 
         cindex_metrics['train'].append(logs['train_cindex'])

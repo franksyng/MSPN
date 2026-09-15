@@ -5,6 +5,73 @@ from models.mspn import ABMILHead
 from models.layers import GlobalAttention, GlobalGatedAttention, create_mlp
 from utils.universal_utils import initialize_weights
 
+# class ABMIL(nn.Module):
+#     def __init__(self, in_dim=768, n_classes=2, surv=False):
+#         super(ABMIL, self).__init__()
+#         self.M = in_dim
+#         self.L = 128
+#         self.ATTENTION_BRANCHES = 1
+#         self.surv = surv
+
+#         # self.feature_extractor_part1 = nn.Sequential(
+#         #     nn.Conv2d(1, 20, kernel_size=5),
+#         #     nn.ReLU(),
+#         #     nn.MaxPool2d(2, stride=2),
+#         #     nn.Conv2d(20, 50, kernel_size=5),
+#         #     nn.ReLU(),
+#         #     nn.MaxPool2d(2, stride=2)
+#         # )
+
+#         # self.feature_extractor_part2 = nn.Sequential(
+#         #     nn.Linear(50 * 4 * 4, self.M),
+#         #     nn.ReLU(),
+#         # )
+
+#         self.attention_V = nn.Sequential(
+#             nn.Linear(self.M, self.L), # matrix V
+#             nn.Tanh()
+#         )
+
+#         self.attention_U = nn.Sequential(
+#             nn.Linear(self.M, self.L), # matrix U
+#             nn.Sigmoid()
+#         )
+
+#         self.attention_w = nn.Linear(self.L, self.ATTENTION_BRANCHES) # matrix w (or vector w if self.ATTENTION_BRANCHES==1)
+
+#         self.classifier = nn.Sequential(
+#             nn.Linear(self.M*self.ATTENTION_BRANCHES, n_classes),
+#             # nn.Sigmoid()
+#         )
+    
+#     def forward(self, x, vis_heatmap=False):
+#         # if not vis_heatmap:
+#         x = x.squeeze(0)
+#         H = x
+#         # H = self.feature_extractor_part1(x)
+#         # H = H.view(-1, 50 * 4 * 4)
+#         # H = self.feature_extractor_part2(H)  # KxM
+
+#         A_V = self.attention_V(H)  # KxL
+#         A_U = self.attention_U(H)  # KxL
+#         A = self.attention_w(A_V * A_U) # element wise multiplication # KxATTENTION_BRANCHES
+#         A = torch.transpose(A, 1, 0)  # ATTENTION_BRANCHESxK
+#         A_raw = A
+#         A = F.softmax(A, dim=1)  # softmax over K
+
+#         Z = torch.mm(A, H)  # ATTENTION_BRANCHESxM
+
+#         logits = self.classifier(Z)
+
+#         if vis_heatmap:
+#             return A_raw, logits
+#         else:
+#             if self.surv:
+#                 hazards = torch.sigmoid(logits)
+#                 S = torch.cumprod(1 - hazards, dim=1)
+#                 return hazards, S, None # match output dim
+#             else:
+#                 return logits, None
 
 class ABMIL(nn.Module):
     def __init__(self, in_channels=768, n_classes=2, mil_hidden_1=512, mil_hidden_2=128, attn_branches=1):
@@ -13,7 +80,6 @@ class ABMIL(nn.Module):
         self.classifier = nn.Sequential(
             nn.Linear(mil_hidden_1*attn_branches, n_classes),
         )
-        initialize_weights(self)
     
     def forward(self, x, vis_heatmap=False):
         # if not vis_heatmap:
@@ -24,6 +90,11 @@ class ABMIL(nn.Module):
         if vis_heatmap:
             return A_raw, logits
         else:
+            # if self.surv:
+                # hazards = torch.sigmoid(logits)
+                # S = torch.cumprod(1 - hazards, dim=1)
+                # return hazards, S, None # match output dim
+            # else:
             return logits, None
 
 class ABMILMSCat(nn.Module):
@@ -43,9 +114,10 @@ class ABMILMSCat(nn.Module):
         self.classifier = nn.Sequential(
             nn.Linear(int(mil_hidden_2*3), n_classes),
         )
-        initialize_weights(self)
     
     def forward(self, x, vis_heatmap=False):
+        # if not vis_heatmap:
+        # x = x.squeeze(0)
         x_5x, x_10x, x_20x = x
         x_5x = x_5x.squeeze(0)
         x_10x = x_10x.squeeze(0)
@@ -56,11 +128,22 @@ class ABMILMSCat(nn.Module):
         attn_feats_20x, A_raw_20x = self.abmil_head_20x(x_20x)
 
         ms_feats = torch.concat((self.ms_encoder(attn_feats_5x), self.ms_encoder(attn_feats_10x), self.ms_encoder(attn_feats_20x)), dim=1)
+        # print(ms_feats.shape)
+        # cs_attn = self.cs_attn(ms_feats.view(1, ms_feats.shape[0], ms_feats.shape[1], 1))
+        # print(cs_attn.shape)
+        # cs_attn = F.softmax(cs_attn.view(1, 3), dim=1)
+        # cs_attn_feats = torch.mm(cs_attn, ms_feats.T)
+
         logits = self.classifier(ms_feats)
 
         if vis_heatmap:
             return (A_raw_5x, A_raw_10x, A_raw_20x), logits
         else:
+            # if self.surv:
+                # hazards = torch.sigmoid(logits)
+                # S = torch.cumprod(1 - hazards, dim=1)
+                # return hazards, S, None # match output dim
+            # else:
             return logits, None
 
 class ABMILMS(nn.Module):
@@ -80,7 +163,6 @@ class ABMILMS(nn.Module):
         self.classifier = nn.Sequential(
             nn.Linear(mil_hidden_2, n_classes),
         )
-        initialize_weights(self)
     
     def forward(self, x, vis_heatmap=False):
         # if not vis_heatmap:
@@ -95,7 +177,9 @@ class ABMILMS(nn.Module):
         attn_feats_20x, A_raw_20x = self.abmil_head_20x(x_20x)
 
         ms_feats = torch.concat((self.ms_encoder(attn_feats_5x), self.ms_encoder(attn_feats_10x), self.ms_encoder(attn_feats_20x)), dim=0).T
+        # print(ms_feats.shape)
         cs_attn = self.cs_attn(ms_feats.view(1, ms_feats.shape[0], ms_feats.shape[1], 1))
+        # print(cs_attn.shape)
         cs_attn = F.softmax(cs_attn.view(1, 3), dim=1)
         cs_attn_feats = torch.mm(cs_attn, ms_feats.T)
 
@@ -104,6 +188,11 @@ class ABMILMS(nn.Module):
         if vis_heatmap:
             return (A_raw_5x, A_raw_10x, A_raw_20x), logits
         else:
+            # if self.surv:
+                # hazards = torch.sigmoid(logits)
+                # S = torch.cumprod(1 - hazards, dim=1)
+                # return hazards, S, None # match output dim
+            # else:
             return logits, None
         
 
@@ -123,6 +212,7 @@ class ABMILPretrained(nn.Module):
         gate (int): Whether to use gated attention (True) or standard attention (False) (default: True).
         num_classes (int): Number of output classes for the classification head (default: 2).
     """
+
     def __init__(
             self,
             in_dim: int = 1024,
@@ -153,6 +243,7 @@ class ABMILPretrained(nn.Module):
 
         if num_classes > 0:
             self.classifier = nn.Linear(embed_dim, num_classes)
+        # self.initialize_weights()
         initialize_weights(self)
 
     def forward_attention(self, h: torch.Tensor, attn_mask=None, attn_only=True) -> torch.Tensor:

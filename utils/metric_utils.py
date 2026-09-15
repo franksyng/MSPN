@@ -7,6 +7,7 @@ import itertools
 import os
 from math import sqrt
 from scipy.stats import norm
+from sklearn.metrics import roc_curve, roc_auc_score
 
 
 def print_cnf_matrix(cnf_matrix, normalize=False):
@@ -135,6 +136,126 @@ def plot_roc_curves(roc_curves, save_dir, ensemble=False):
         plt.legend(loc='lower right')
         fig.savefig(os.path.join(save_dir, f'roc_curves_{curr_set}'))
         plt.close(fig)
+
+def roc_with_ci(preds, ensemble_pred, y, save_dir):
+    # ---- 1) Per-model AUCs and ensemble AUC ----
+    # auc_each = [roc_auc_score(y, p) for p in preds]
+    # auc_mean_models = float(np.mean(auc_each))
+    # auc_std_models  = float(np.std(auc_each, ddof=1))  # model-to-model variability (unbiased)
+
+    # Ensemble prediction by averaging probabilities across the 5 models
+    # pred_ensemble = preds.mean(axis=0)
+    auc_ensemble = roc_auc_score(y, ensemble_pred)
+    fpr_grid = np.linspace(0.0, 1.0, 1001)
+    tpr_matrix = []
+
+    # for p in preds:
+    #     fpr_i, tpr_i, _ = roc_curve(y, p)
+    #     # Ensure strictly increasing FPR for interpolation safety
+    #     uniq_fpr, uniq_idx = np.unique(fpr_i, return_index=True)
+    #     tpr_i = tpr_i[uniq_idx]
+    #     # Interpolate TPR at the common grid
+    #     tpr_interp = np.interp(fpr_grid, uniq_fpr, tpr_i)
+    #     tpr_interp[0] = 0.0
+    #     tpr_interp[-1] = 1.0
+    #     tpr_matrix.append(tpr_interp)
+
+    # tpr_matrix = np.vstack(tpr_matrix)  # (5, len(fpr_grid))
+    # tpr_mean = tpr_matrix.mean(axis=0)
+    # tpr_std  = tpr_matrix.std(axis=0, ddof=1)
+
+    # # Also compute ROC for the ensemble prediction for the main curve
+    # fpr_e, tpr_e, _ = roc_curve(y, ensemble_pred)
+
+    # # ---- 3) Plot: single curve with shaded model-variability band ----
+    # plt.figure(figsize=(6, 6))
+
+    # # Shaded band: mean ± 1 std across models at fixed FPR
+    # tpr_upper = np.clip(tpr_mean + tpr_std, 0, 1)
+    # tpr_lower = np.clip(tpr_mean - tpr_std, 0, 1)
+    # plt.fill_between(fpr_grid, tpr_lower, tpr_upper, alpha=0.2, label='Model STD band')
+
+    # # Ensemble ROC curve (single representative curve)
+    # plt.plot(fpr_e, tpr_e, linewidth=2, label=f'Ensemble ROC (AUC={auc_ensemble:.3f})')
+
+    # # Chance line
+    # plt.plot([0, 1], [0, 1], linestyle='--', linewidth=1)
+
+    # plt.xlabel('False Positive Rate')
+    # plt.ylabel('True Positive Rate')
+    # plt.title('External ROC: 5-fold models → one curve with model STD band')
+    # plt.legend()
+    # plt.tight_layout()
+
+    # --- Bootstrap sampling ---
+    # print(y)
+    y = np.array(y)
+    ensemble_pred = np.array(ensemble_pred)
+    # ---- 1) Base ROC from the full external set ----
+    fpr_base, tpr_base, _ = roc_curve(y, ensemble_pred)
+    auc_base = roc_auc_score(y, ensemble_pred)
+
+    # ---- 2) Bootstrap ROC curves to form a CI ribbon ----
+    B = 2000                    # number of bootstrap replicates (adjust as you like)
+    rng = np.random.default_rng(42)
+    fpr_grid = np.linspace(0, 1, 1001)  # common FPR grid for interpolation
+    tpr_boot = []               # will become (B_eff, len(fpr_grid))
+
+    for _ in range(B):
+        # resample indices with replacement
+        idx = rng.integers(0, len(y), len(y))
+        y_b = y[idx]
+        p_b = ensemble_pred[idx]
+
+        # skip draws with a single class (ROC undefined)
+        if np.unique(y_b).size < 2:
+            continue
+
+        fpr_b, tpr_b, _ = roc_curve(y_b, p_b)
+        # ensure strictly increasing FPR before interpolation
+        ufpr, uidx = np.unique(fpr_b, return_index=True)
+        utpr = tpr_b[uidx]
+        # interpolate to common grid
+        tpr_interp = np.interp(fpr_grid, ufpr, utpr)
+        tpr_interp[0] = 0.0
+        tpr_interp[-1] = 1.0
+        tpr_boot.append(tpr_interp)
+
+    tpr_boot = np.vstack(tpr_boot)  # shape: (B_eff, len(fpr_grid))
+
+    # pointwise 95% CI band
+    tpr_lo = np.percentile(tpr_boot, 2.5, axis=0)
+    tpr_hi = np.percentile(tpr_boot, 97.5, axis=0)
+
+    # (optional) 95% CI for AUC as a caption
+    auc_boot = []
+    for tpr_interp in tpr_boot:
+        # approximate AUC for each bootstrap curve via trapezoid rule on the grid
+        auc_boot.append(np.trapz(tpr_interp, fpr_grid))
+    auc_boot = np.asarray(auc_boot)
+    auc_ci_l, auc_ci_u = np.percentile(auc_boot, [2.5, 97.5])
+
+    # ---- 3) Plot: ROC with 95% CI ribbon ----
+    plt.figure(figsize=(6, 6))
+
+    # ribbon
+    plt.fill_between(fpr_grid, tpr_lo, tpr_hi, alpha=0.2, label='95% CI')
+
+    # base ROC (from full data)
+    plt.plot(fpr_base, tpr_base, linewidth=2,
+            label=f'Ensemble ROC (AUC={auc_base:.3f}; 95% CI [{auc_ci_l:.3f}, {auc_ci_u:.3f}])')
+
+    # chance
+    plt.plot([0, 1], [0, 1], linestyle='--', linewidth=1)
+
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('ROC (95% CI)')
+    plt.legend(loc='lower right')
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, f'roc_curves_ci'))
+    return auc_base, auc_ci_l, auc_ci_u
+
 
 
 def save_cnf_matrix(cnf_matrix, classes, save_dir):

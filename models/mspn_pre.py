@@ -1,160 +1,45 @@
-import torch
+"""MSPN in front of a PRETRAINED ABMIL body.
+
+Mirrors `models.mspn.ABMIL_MSPN` exactly, except the attention head is a
+supplied `models.abmil.ABMILPretrained` carrying pretrained weights. The
+CALLER loads that state (see `models.pretrained_mil.build_pretrained_abmil`),
+so there is one place responsible for it and no chance of two code paths
+disagreeing about what "pretrained" means.
+
+The pretrained checkpoint's `patch_embed` is encoder specific and is dropped
+on load, so only the attention body transfers. MSPN therefore sits between our
+own front end and the pretrained attention.
+"""
+
 import torch.nn as nn
-import torch.nn.functional as F
-from models.layers import GlobalAttention, GlobalGatedAttention, create_mlp
-from models.mspn import MSPN
-from utils.universal_utils import initialize_weights
+
+from models.mspn import MSPN, DEFAULT_VIEW_SCALES, _front_end
+
 
 class ABMILMSPNPretrained(nn.Module):
-    """
-    ABMIL (Attention-based Multiple Instance Learning) model.
+    def __init__(self, in_channels=512, n_classes=2, rpn_hidden=64,
+                 view_scales=DEFAULT_VIEW_SCALES, reduction_size=512,
+                 pretrained_head=None):
+        super().__init__()
+        if pretrained_head is None:
+            raise ValueError('ABMILMSPNPretrained needs the pretrained ABMIL '
+                             'body; the caller must build and load it')
+        self.fc = _front_end(in_channels, reduction_size)
+        self.mspn = MSPN(reduction_size, rpn_hidden, view_scales)
+        self.pre = pretrained_head
 
-    This class implements the core ABMIL architecture, which uses a patch embedding MLP,
-    followed by a global attention or gated attention mechanism, and an optional classification head.
+    def forward(self, x, coords, vis_heatmap=False, vis_coarse_map=False):
+        if not vis_heatmap:
+            x = x.squeeze(0)
+        coords = coords.squeeze(0).to(x.device)
+        h = self.fc(x)
 
-    Args:
-        in_dim (int): Input feature dimension for each instance (default: 1024).
-        embed_dim (int): Embedding dimension after patch embedding (default: 512).
-        num_fc_layers (int): Number of fully connected layers in the patch embedding MLP (default: 1).
-        dropout (float): Dropout rate applied in the MLP and attention layers (default: 0.25).
-        attn_dim (int): Dimension of the attention mechanism (default: 384).
-        gate (int): Whether to use gated attention (True) or standard attention (False) (default: True).
-        num_classes (int): Number of output classes for the classification head (default: 2).
-    """
+        h_coarse, coarse_map = self.mspn(h, coords)
+        if h_coarse.dim() == 2:              # ABMILPretrained wants [B, M, D]
+            h_coarse = h_coarse.unsqueeze(0)
+        out = self.pre(h_coarse)
+        logits = out[0] if isinstance(out, tuple) else out
 
-    def __init__(
-            self,
-            in_dim: int = 1024,
-            embed_dim: int = 512,
-            num_fc_layers: int = 1,
-            dropout: float = 0.25,
-            attn_dim: int = 384,
-            gate: int = True,
-            num_classes: int = 2,
-            view_scales=[1536, 2048, 3072],
-            reduction_size=512,
-    ):
-        super(ABMILMSPNPretrained, self).__init__()
-        self.multiscale_rpn = MSPN(in_channels=reduction_size, hidden_channels=128, view_scales=view_scales)
-
-        if in_dim != reduction_size:
-            self.fc = nn.Linear(in_dim, reduction_size)
-            self.patch_embed_scratch = create_mlp(
-            in_dim=reduction_size,
-            hid_dims=[embed_dim] *
-                     (num_fc_layers - 1),
-            dropout=dropout,
-            out_dim=embed_dim,
-            end_with_fc=False
-        )
-        else:
-            self.fc = None
-            self.patch_embed = create_mlp(
-                in_dim=in_dim,
-                hid_dims=[embed_dim] *
-                        (num_fc_layers - 1),
-                dropout=dropout,
-                out_dim=embed_dim,
-                end_with_fc=False
-            )
-
-        attn_func = GlobalGatedAttention if gate else GlobalAttention
-        self.global_attn = attn_func(
-            L=embed_dim,
-            D=attn_dim,
-            dropout=dropout,
-            num_classes=1
-        )
-
-        if num_classes > 0:
-            self.classifier = nn.Linear(embed_dim, num_classes)
-        # self.initialize_weights()
-        initialize_weights(self)
-
-    def forward_attention(self, h: torch.Tensor, attn_mask=None, attn_only=True) -> torch.Tensor:
-        """
-        Compute the attention scores (and optionally the embedded features) for the input instances.
-
-        Args:
-            h (torch.Tensor): Input tensor of shape [B, M, D], where B is the batch size,
-                M is the number of instances (patches), and D is the input feature dimension.
-            attn_mask (torch.Tensor, optional): Optional attention mask of shape [B, M], where 1 indicates
-                valid positions and 0 indicates masked positions. If provided, masked positions are set to
-                a very large negative value before softmax.
-            attn_only (bool, optional): If True, return only the attention scores (A).
-                If False, return a tuple (h, A) where h is the embedded features and A is the attention scores.
-
-        Returns:
-            torch.Tensor: If attn_only is True, returns the attention scores tensor of shape [B, K, M],
-                where K is the number of attention heads (usually 1). If attn_only is False, returns a tuple
-                (h, A) where h is the embedded features of shape [B, M, D'] and A is the attention scores.
-        """
-        if self.fc != None:
-            h = self.patch_embed_scratch(h)
-        else:
-            h = self.patch_embed(h)
-        A = self.global_attn(h)  # B x M x K
-        A = torch.transpose(A, -2, -1)  # B x K x M
-        if attn_mask is not None:
-            A = A + (1 - attn_mask).unsqueeze(dim=1) * torch.finfo(A.dtype).min
-
-        if attn_only:
-            return A
-        return h, A
-
-    def forward_features(self, h: torch.Tensor, attn_mask=None, return_attention: bool = True) -> torch.Tensor:
-        """
-        Compute bag-level features using attention pooling.
-
-        Args:
-            h (torch.Tensor): [B, M, D] input features.
-            attn_mask (torch.Tensor, optional): Attention mask.
-
-        Returns:
-            Tuple[torch.Tensor, dict]: Bag features [B, D] and attention weights.
-        """
-        h, A_base = self.forward_attention(h, attn_mask=attn_mask, attn_only=False)  # A == B x K x M
-        A = F.softmax(A_base, dim=-1)  # softmax over N
-        h = torch.bmm(A, h).squeeze(dim=1)  # B x K x C --> B x C
-        log_dict = {'attention': A_base if return_attention else None}
-        return h, log_dict
-
-    def forward_head(self, h: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            h: [B x D]-dim torch.Tensor.
-
-        Returns:
-            logits: [B x num_classes]-dim torch.Tensor.
-        """
-        logits = self.classifier(h)
-        return logits
-
-    def forward(self, h: torch.Tensor, coords,
-                loss_fn: nn.Module = None,
-                label: torch.LongTensor = None,
-                attn_mask=None,
-                return_attention: bool = False,
-                return_slide_feats: bool = False) -> torch.Tensor:
-        """
-        Forward pass for ABMIL.
-
-        Args:
-            h: [B, M, D] input features.
-            loss_fn: Optional loss function.
-            label: Optional labels.
-            attn_mask: Optional attention mask.
-
-        Returns:
-            Tuple of (results_dict, log_dict) with logits and loss.
-        """
-        device = h.device
-        h = h.squeeze(0)
-        coords = coords.squeeze(0).to(device)
-        if self.fc != None:
-            h = self.fc(h)
-        h_coarse, coarse_map = self.multiscale_rpn(h, coords)
-        wsi_feats, log_dict = self.forward_features(h_coarse.unsqueeze(0), attn_mask=attn_mask, return_attention=return_attention)
-        logits = self.forward_head(wsi_feats)
+        if vis_coarse_map:
+            return coarse_map, logits
         return logits, None
-

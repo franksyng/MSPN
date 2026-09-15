@@ -19,20 +19,61 @@ class FCLayer(nn.Module):
         x = self.fc(feats)
         return feats, x
 
-# class IClassifier(nn.Module):
-#     def __init__(self, feature_extractor, feature_size, output_class):
-#         super(IClassifier, self).__init__()
+class IClassifier(nn.Module):
+    def __init__(self, feature_extractor, feature_size, output_class):
+        super(IClassifier, self).__init__()
         
-#         self.feature_extractor = feature_extractor      
-#         self.fc = nn.Linear(feature_size, output_class)
+        self.feature_extractor = feature_extractor      
+        self.fc = nn.Linear(feature_size, output_class)
         
-#     def forward(self, x):
-#         device = x.device
-#         feats = self.feature_extractor(x) # N x K
-#         c = self.fc(feats.view(feats.shape[0], -1)) # N x C
-#         return feats.view(feats.shape[0], -1), c
+    def forward(self, x):
+        device = x.device
+        feats = self.feature_extractor(x) # N x K
+        c = self.fc(feats.view(feats.shape[0], -1)) # N x C
+        return feats.view(feats.shape[0], -1), c
 
-
+# class BClassifier(nn.Module):
+#     def __init__(self, input_size, dropout_v=0.0, nonlinear=True, passing_v=False): # K, L, N
+#         super(BClassifier, self).__init__()
+#         if nonlinear:
+#             self.q = nn.Sequential(nn.Linear(input_size, 128), nn.ReLU(), nn.Linear(128, 128), nn.Tanh())
+#         else:
+#             self.q = nn.Linear(input_size, 128)
+#         if passing_v:
+#             self.v = nn.Sequential(
+#                 nn.Dropout(dropout_v),
+#                 nn.Linear(input_size, input_size),
+#                 nn.ReLU()
+#             )
+#         else:
+#             self.v = nn.Identity()
+        
+#         ### 1D convolutional layer that can handle multiple class (including binary)
+#         # self.fcc = nn.Conv1d(output_class, output_class, kernel_size=input_size)
+        
+#     def forward(self, feats, c, proposal=None): # N x K, N x C
+#         device = feats.device
+        
+        
+#         V = self.v(feats) # N x V, unsorted
+#         Q = self.q(feats).view(feats.shape[0], -1) # N x Q, unsorted
+#         if proposal != None:
+#             V = V + proposal
+#         # print(V.shape, Q.shape)
+#         # handle multiple classes without for loop
+#         _, m_indices = torch.sort(c, 0, descending=True) # sort class scores along the instance dimension, m_indices in shape N x C
+#         m_feats = torch.index_select(feats, dim=0, index=m_indices[0, :]) # select critical instances, m_feats in shape C x K 
+#         q_max = self.q(m_feats) # compute queries of critical instances, q_max in shape C x Q
+#         A = torch.mm(Q, q_max.transpose(0, 1)) # compute inner product of Q to each entry of q_max, A in shape N x C, each column contains unnormalized attention scores
+#         A_raw = A
+#         A = F.softmax( A / torch.sqrt(torch.tensor(Q.shape[1], dtype=torch.float32, device=device)), 0) # normalize attention scores, A in shape N x C, 
+#         B = torch.mm(A.transpose(0, 1), V) # compute bag representation, B in shape C x V
+                
+#         B = B.view(1, B.shape[0], B.shape[1]) # 1 x C x V
+#         # C = self.fcc(B) # 1 x C x 1
+#         # C = C.view(1, -1)
+#         # return C, A_raw, B 
+#         return A_raw, B
 class BClassifier(nn.Module):
     def __init__(self, input_size, dropout_v=0.0, nonlinear=True, passing_v=False): # K, L, N
         super(BClassifier, self).__init__()
@@ -75,7 +116,7 @@ class BClassifier(nn.Module):
         return A_raw, B
     
 class DSMIL(nn.Module):
-    def __init__(self, n_classes, i_classifier, b_classifier, surv=False, reduction_size=512):
+    def __init__(self, in_channels, n_classes, i_classifier, b_classifier, surv=False, reduction_size=512):
         super(DSMIL, self).__init__()
         self.i_classifier = i_classifier
         self.b_classifier = b_classifier
@@ -96,6 +137,58 @@ class DSMIL(nn.Module):
         else:
             return classes, prediction_bag, A_raw, B
 
+# class DSMILMS(nn.Module):
+#     def __init__(self, n_classes, i_classifier, b_classifier, mil_hidden_1=512, mil_hidden_2=64):
+#         super(DSMILMS, self).__init__()
+#         self.i_classifier_5x = i_classifier
+#         self.b_classifier_5x = b_classifier
+
+#         self.i_classifier_10x = i_classifier
+#         self.b_classifier_10x = b_classifier
+
+#         self.i_classifier_20x = i_classifier
+#         self.b_classifier_20x = b_classifier
+
+#         self.ms_encoder = nn.Sequential(
+#             nn.Linear(mil_hidden_1, mil_hidden_2),
+#         )
+#         self.cs_attn = nn.Sequential(
+#             nn.Conv2d(int(mil_hidden_2*2), mil_hidden_2, kernel_size=3, padding=1),
+#             nn.ReLU(),
+#             nn.Conv2d(mil_hidden_2, 1, kernel_size=3, padding=1),
+#         )
+#         self.classifier = nn.Sequential(
+#             nn.Linear(int(mil_hidden_2*2), n_classes),
+#         )
+        
+#     def forward(self, x):
+#         # print('x shape', x.shape)
+#         # x = x.squeeze(0)
+#         x_5x, x_10x, x_20x = x
+#         x_5x = x_5x.squeeze(0)
+#         x_10x = x_10x.squeeze(0)
+#         x_20x = x_20x.squeeze(0)
+
+#         feats_5x, classes_5x = self.i_classifier_5x(x_5x)
+#         A_raw_5x, B_5x = self.b_classifier_5x(feats_5x, classes_5x)
+#         feats_10x, classes_10x = self.i_classifier_10x(x_10x)
+#         A_raw_10x, B_10x = self.b_classifier_10x(feats_10x, classes_10x)
+#         feats_20x, classes_20x = self.i_classifier_20x(x_20x)
+#         A_raw_20x, B_20x = self.b_classifier_20x(feats_20x, classes_20x)
+#         # print(B_5x.shape)
+
+#         ms_feats = torch.concat((self.ms_encoder(B_5x), self.ms_encoder(B_10x), self.ms_encoder(B_20x)), dim=0).view(3, -1).T
+#         # print(ms_feats.shape)
+#         cs_attn = self.cs_attn(ms_feats.view(1, ms_feats.shape[0], ms_feats.shape[1], 1))
+#         # print(cs_attn.shape)
+#         cs_attn = F.softmax(cs_attn.view(1, 3), dim=1)
+#         # print(cs_attn.shape, ms_feats.shape)
+#         cs_attn_feats = torch.mm(cs_attn, ms_feats.T)
+#         # print(cs_attn_feats.shape)
+#         logits = self.classifier(cs_attn_feats)
+
+#         return logits, None
+#         # return classes, prediction_bag
 
 class DSMILMS(nn.Module):
     def __init__(self, n_classes, i_classifier, b_classifier, mil_hidden_1=512, mil_hidden_2=64):
@@ -117,10 +210,14 @@ class DSMILMS(nn.Module):
             nn.ReLU(),
             nn.Conv2d(int(mil_hidden_2/2), 1, kernel_size=3, padding=1),
         )
-
+        # self.classifier = nn.Sequential(
+        #     nn.Linear(int(mil_hidden_2*2), n_classes),
+        # )
         self.fcc = nn.Conv1d(n_classes, n_classes, kernel_size=mil_hidden_2)
         
     def forward(self, x):
+        # print('x shape', x.shape)
+        # x = x.squeeze(0)
         x_5x, x_10x, x_20x = x
         x_5x = x_5x.squeeze(0)
         x_10x = x_10x.squeeze(0)
@@ -132,14 +229,21 @@ class DSMILMS(nn.Module):
         A_raw_10x, B_10x = self.b_classifier_10x(feats_10x, classes_10x)
         feats_20x, classes_20x = self.i_classifier_20x(x_20x)
         A_raw_20x, B_20x = self.b_classifier_20x(feats_20x, classes_20x)
+        # print(B_5x.shape)
 
         ms_feats = torch.permute(torch.concat((self.ms_encoder(B_5x), self.ms_encoder(B_10x), self.ms_encoder(B_20x)), dim=0), (1,2,0))
+        # print(ms_feats.shape)
         cs_attn = self.cs_attn(ms_feats.view(ms_feats.shape[0], ms_feats.shape[1], ms_feats.shape[2], 1))
+        # print(cs_attn.shape)
         cs_attn = F.softmax(cs_attn.view(cs_attn.shape[0], cs_attn.shape[1], cs_attn.shape[2]), dim=-1)
+        # print(cs_attn.shape, ms_feats.shape, torch.permute(ms_feats, (0, 2, 1)).shape)
         cs_attn_feats = torch.matmul(cs_attn, torch.permute(ms_feats, (0, 2, 1))).view(1,cs_attn.shape[0],-1)
+        # print(cs_attn_feats.shape)
+        # logits = self.classifier(cs_attn_feats)
         prediction_bag = self.fcc(cs_attn_feats).view(1,-1)
 
         return prediction_bag, None
+        # return classes, prediction_bag
 
 class DSMILMSCat(nn.Module):
     def __init__(self, n_classes, i_classifier, b_classifier, mil_hidden_1=512, mil_hidden_2=64):
@@ -156,9 +260,19 @@ class DSMILMSCat(nn.Module):
         self.ms_encoder = nn.Sequential(
             nn.Linear(mil_hidden_1, mil_hidden_2),
         )
+        # self.cs_attn = nn.Sequential(
+        #     nn.Conv2d(mil_hidden_2, int(mil_hidden_2/2), kernel_size=3, padding=1),
+        #     nn.ReLU(),
+        #     nn.Conv2d(int(mil_hidden_2/2), 1, kernel_size=3, padding=1),
+        # )
+        # # self.classifier = nn.Sequential(
+        # #     nn.Linear(int(mil_hidden_2*2), n_classes),
+        # # )
         self.fcc = nn.Conv1d(n_classes, n_classes, kernel_size=int(mil_hidden_2*3))
         
     def forward(self, x):
+        # print('x shape', x.shape)
+        # x = x.squeeze(0)
         x_5x, x_10x, x_20x = x
         x_5x = x_5x.squeeze(0)
         x_10x = x_10x.squeeze(0)
@@ -170,24 +284,43 @@ class DSMILMSCat(nn.Module):
         A_raw_10x, B_10x = self.b_classifier_10x(feats_10x, classes_10x)
         feats_20x, classes_20x = self.i_classifier_20x(x_20x)
         A_raw_20x, B_20x = self.b_classifier_20x(feats_20x, classes_20x)
+        # print(B_5x.shape)
+
 
         ms_feats = torch.concat((self.ms_encoder(B_5x), self.ms_encoder(B_10x), self.ms_encoder(B_20x)), dim=0).view(B_5x.shape[1], -1)
+        # ms_feats = torch.concat((B_5x, B_10x, B_20x), dim=0).view(B_5x.shape[1], -1)
+        # print(ms_feats.shape)
+        # cs_attn = self.cs_attn(ms_feats.view(ms_feats.shape[0], ms_feats.shape[1], ms_feats.shape[2], 1))
+        # # print(cs_attn.shape)
+        # cs_attn = F.softmax(cs_attn.view(cs_attn.shape[0], cs_attn.shape[1], cs_attn.shape[2]), dim=-1)
+        # # print(cs_attn.shape, ms_feats.shape, torch.permute(ms_feats, (0, 2, 1)).shape)
+        # cs_attn_feats = torch.matmul(cs_attn, torch.permute(ms_feats, (0, 2, 1))).view(1,cs_attn.shape[0],-1)
+        # print(cs_attn_feats.shape)
+        # logits = self.classifier(cs_attn_feats)
         prediction_bag = self.fcc(ms_feats).view(1,-1)
 
         return prediction_bag, None
 
 
+# --- For pretrained implementation ---
+# --- Core Model Components ---
+
 class IClassifier(nn.Module):
+    """Instance-level classifier."""
+
     def __init__(self, in_dim: int, num_classes: int):
         super().__init__()
         self.inst_classifier = nn.Linear(in_dim, num_classes)
 
     def forward(self, h: torch.Tensor) -> torch.Tensor:
-        c = self.inst_classifier(h)
+        # h: [B x M x D]
+        c = self.inst_classifier(h)  # B x M x C
         return c
 
 
 class BClassifier2(nn.Module):
+    """Bag-level classifier with attention."""
+
     def __init__(self, in_dim: int, attn_dim: int = 384, dropout: float = 0.0):
         super().__init__()
         self.q = nn.Linear(in_dim, attn_dim)
@@ -200,26 +333,35 @@ class BClassifier2(nn.Module):
 
     def forward(self, h: torch.Tensor, c: torch.Tensor, attn_mask=None) -> tuple[torch.Tensor, torch.Tensor]:
         device = h.device
-        V = self.v(h)
-        Q = self.q(h)
+        V = self.v(h)  # B x M x D
+        Q = self.q(h)  # B x M x D_attn
 
+        # Sort instances by class scores to find critical instances
         _, m_indices = torch.sort(c, dim=1, descending=True)
 
+        # Select features of top instances for each class
         m_feats = torch.stack(
             [torch.index_select(h_i, dim=0, index=m_indices_i[0, :]) for h_i, m_indices_i in zip(h, m_indices)], 0
         )
 
-        q_max = self.q(m_feats)
-        A = torch.bmm(Q, q_max.transpose(1, 2))
+        q_max = self.q(m_feats)  # B x C x D_attn
+        # Attention mechanism: I think this could be the error?
+        A = torch.bmm(Q, q_max.transpose(1, 2))  # B x M x C
         if attn_mask is not None:
             A = A + (1 - attn_mask).unsqueeze(dim=2) * torch.finfo(A.dtype).min
 
-        A = F.softmax(A / torch.sqrt(torch.tensor(Q.shape[-1], dtype=torch.float32, device=device)), dim=1)
+        A = F.softmax(A / torch.sqrt(torch.tensor(Q.shape[-1], dtype=torch.float32, device=device)),
+                      dim=1)  # Softmax over M
 
-        B = torch.bmm(A.transpose(1, 2), V)
+        # Aggregate features
+
+        B = torch.bmm(A.transpose(1, 2), V)  # B x C x D
 
         B = self.norm(B)
         return B, A
+
+
+# --- Main DSMIL Module (inherits from MIL base) ---
 
 class DSMILPretrained(nn.Module):
     def __init__(
@@ -270,6 +412,17 @@ class DSMILPretrained(nn.Module):
                 attn_mask=None, return_attention: bool = False,
                 return_slide_feats: bool = False) -> tuple[dict, dict]:
         slide_feats, intermeds = self.forward_features(h, attn_mask=attn_mask, return_attention=return_attention)
+        # max_instance_logits, _ = torch.max(intermeds['instance_classes'], 1)
         bag_logits = self.forward_head(slide_feats)
+        # logits = 0.5 * (bag_logits + max_instance_logits)
+        # cls_loss = self.compute_loss(loss_fn, logits, label)
+
+        # results_dict = {'logits': logits, 'loss': cls_loss}
+        # log_dict = {'loss': cls_loss.item() if cls_loss is not None else -1}
+        # if not return_attention and 'attention' in log_dict:
+        #     del log_dict['attention']
+        # if return_slide_feats:
+        #     log_dict['slide_feats'] = slide_feats
 
         return intermeds, bag_logits, None, slide_feats
+        # return results_dict, log_dict

@@ -1,17 +1,34 @@
 
 # basic imports
+import json
+import os
+
+import numpy as np
+import pandas as pd
+from sklearn import metrics
+from torch import device
 from tqdm import tqdm
 import numpy as np
+from copy import deepcopy
 from sksurv.metrics import concordance_index_censored
 
 # torch
 import torch
+import torch.nn as nn
 
 from utils.universal_utils import load_loop_logs
-from utils.metric_utils import MetricLogger
+from utils.metric_utils import print_cnf_matrix, find_pred_score_binary, eer_threshold, MetricLogger
+
+
+def _mspn_aux(model, mdl_name):
+    """Auxiliary MSPN loss (e.g. containment), if this arch exposes one."""
+    if 'mspn' not in mdl_name:
+        return None
+    return getattr(getattr(model, 'mspn', None), 'aux_loss', None)
 
 def slide_level_loop_surv(model, device, optimizer, criterion, gc, loader, case_len, reg_fn=None, l1_reg=None, phase=None, mdl_name='None'):
     loop_logger = load_loop_logs(None, phase)
+    # metrics_logger = MetricLogger(n_classes=cls_num)
     assert phase is not None  # either train, val or test should be chosen
 
     if phase == 'train':
@@ -32,21 +49,46 @@ def slide_level_loop_surv(model, device, optimizer, criterion, gc, loader, case_
                 data, coords = data
                 data = data.to(device, dtype=torch.float32)
                 with torch.torch.set_grad_enabled(phase == 'train'):
-                    if 'clam' in mdl_name:
+                    if 'clam' in mdl_name or 'scl' in mdl_name:
                         mdl_out = model(data, coords, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(logits=output, y=target, c=censorship) + 0.5*inst_loss
+                        _a = _mspn_aux(model, mdl_name)
+                        if _a is not None:
+                            loss = loss + _a
+                    # elif 'dsmil' in mdl_name:
+                        # mdl_out = model(data, coords)
+                        # classes, output, _, _ = mdl_out
+                        # max_prediction, index = torch.max(classes, 0)
+                        # loss_bag = criterion(logits=output, y=target, c=censorship)
+                        # loss_max = criterion(max_prediction.view(1, -1), target)
+                        # loss = 0.5*loss_bag + 0.5*loss_max
                     else:
                         mdl_out = model(data, coords)
                         output, _ = mdl_out
                         loss = criterion(logits=output, y=target, c=censorship)
+                        # `_mspn_aux` was DEFINED at the top of this file but never called, so
+                        # every auxiliary MSPN loss -- containment, entropy, deep supervision --
+                        # was silently inert on surgen_surv while the run still reported as a
+                        # complete 4-task sweep. Same bug class as attempt 7, where attn_inject
+                        # reached only ABMIL. bag_utils.py applies it in all three branches.
+                        _a = _mspn_aux(model, mdl_name)
+                        if _a is not None:
+                            loss = loss + _a
             else:
                 data = data.to(device, dtype=torch.float32)
                 with torch.torch.set_grad_enabled(phase == 'train'):
-                    if 'clam' in mdl_name:
+                    if 'clam' in mdl_name or 'scl' in mdl_name:
                         mdl_out = model(data, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(logits=output, y=target, c=censorship) + 0.5*inst_loss
+                    # elif 'dsmil' in mdl_name:
+                    #     mdl_out = model(data)
+                    #     classes, output, _, _ = mdl_out
+                    #     max_prediction, index = torch.max(classes, 0)
+                    #     loss_bag = criterion(logits=output, y=target, c=censorship)
+                    #     loss_max = criterion(max_prediction.view(1, -1), target)
+                    #     loss = 0.5*loss_bag + 0.5*loss_max
                     else:
                         mdl_out = model(data)
                         output, _ = mdl_out
@@ -54,7 +96,6 @@ def slide_level_loop_surv(model, device, optimizer, criterion, gc, loader, case_
 
             lr_1 = optimizer.param_groups[0]['lr']
             loss_value = loss.item()
-
             hazards = torch.sigmoid(output)
             survival = torch.cumprod(1 - hazards, dim=1)
             risk = -torch.sum(survival, dim=1).detach().cpu().numpy()
@@ -84,6 +125,7 @@ def evaluate_surv(model, device, criterion, test_loader, mdl_name='None'):
     logs = {'eval_cindex': 0}
     eval_logger = MetricLogger(n_classes=4)
     all_risk_scores = np.zeros((len(test_loader)))
+    all_logits = []                      # RAW logits, one 4-vector per slide
     all_censorships = np.zeros((len(test_loader)))
     all_event_times = np.zeros((len(test_loader)))
     with tqdm(total=len(test_loader), desc='eval', unit=' slide', ncols=100) as pbar:
@@ -98,10 +140,17 @@ def evaluate_surv(model, device, criterion, test_loader, mdl_name='None'):
                 data = data.to(device, dtype=torch.float32)
                 # coords = coords.to(device, dtype=torch.float32)
                 with torch.no_grad():
-                    if 'clam' in mdl_name:
+                    if 'clam' in mdl_name or 'scl' in mdl_name:
                         mdl_out = model(data, coords, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(logits=output, y=target, c=censorship) + 0.5*inst_loss
+                    # elif 'dsmil' in mdl_name:
+                    #     mdl_out = model(data, coords)
+                    #     classes, output, _, _ = mdl_out
+                    #     max_prediction, index = torch.max(classes, 0)
+                    #     loss_bag = criterion(logits=output, y=target, c=censorship)
+                    #     loss_max = criterion(max_prediction.view(1, -1), target)
+                    #     loss = 0.5*loss_bag + 0.5*loss_max
                     else:
                         mdl_out = model(data, coords)
                         output, _ = mdl_out
@@ -109,10 +158,17 @@ def evaluate_surv(model, device, criterion, test_loader, mdl_name='None'):
             else:
                 data = data.to(device, dtype=torch.float32)
                 with torch.no_grad():
-                    if 'clam' in mdl_name:
+                    if 'clam' in mdl_name or 'scl' in mdl_name:
                         mdl_out = model(data, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(logits=output, y=target, c=censorship) + 0.5*inst_loss
+                    # elif 'dsmil' in mdl_name:
+                    #     mdl_out = model(data)
+                    #     classes, output, _, _ = mdl_out
+                    #     max_prediction, index = torch.max(classes, 0)
+                    #     loss_bag = criterion(logits=output, y=target, c=censorship)
+                    #     loss_max = criterion(max_prediction.view(1, -1), target)
+                    #     loss = 0.5*loss_bag + 0.5*loss_max
                     else:
                         mdl_out = model(data)
                         output, _ = mdl_out
@@ -123,6 +179,11 @@ def evaluate_surv(model, device, criterion, test_loader, mdl_name='None'):
             interval_loss.append(loss_value)
             pbar.set_postfix(**{'loss (batch)': np.mean(interval_loss)})
             out_probs = torch.softmax(output, dim=1)
+            all_logits.append([float(v) for v in output.detach().cpu().view(-1)])
+            # risk = -torch.sum(S, dim=1).detach().cpu().numpy()
+            # all_risk_scores[idx] = risk
+            # all_censorships[idx] = censorship.item()
+            # all_event_times[idx] = surv_month
             hazards = torch.sigmoid(output)
             survival = torch.cumprod(1 - hazards, dim=1)
             risk = -torch.sum(survival, dim=1).detach().cpu().numpy()
@@ -140,9 +201,46 @@ def evaluate_surv(model, device, criterion, test_loader, mdl_name='None'):
     eval_logger.get_correctness()
     logs['eval_pred_data'] = eval_logger.data_all
     logs['eval_pred_data']['y_pred'] = eval_logger.y_probas
+    # The c-index needs the RISK score, which is
+    #     -sum(cumprod(1 - sigmoid(logits))).
+    # `y_pred` above is softmax(logits), and softmax discards the per-slide
+    # additive constant, so the risk is NOT recoverable from it -- verified on
+    # CONCH/KIRC, where reconstructing from log(p) misses the reported c-index
+    # by up to 0.117. Without these three columns no survival result can be
+    # bootstrapped on c-index at all, which is why every survival p-value in
+    # this project before 2026-08-26 was macro-OvR AUC instead.
+    logs['eval_pred_data']['risk'] = list(map(float, all_risk_scores))
+    logs['eval_pred_data']['event_time'] = list(map(float, all_event_times))
+    logs['eval_pred_data']['censorship'] = list(map(float, all_censorships))
+    # RAW LOGITS are the authoritative record: risk, hazards and softmax all
+    # derive from them, but none of them can be inverted back. Saving only a
+    # derived quantity is what forced the 2026-08-26 re-evaluation of 54
+    # survival cells. Store them so no future survival result ever needs
+    # re-running inference to answer a new question about it.
+    logs['eval_pred_data']['logits'] = [json.dumps(v) for v in all_logits]
     # print(eval_logger.y_probas)
     print(f"[core] eval - c-index: {logs['eval_cindex']:.4f}")
     return logs
+
+def save_surv_predictions(pred_data, split_res_dir):
+    """Write `surv_risk.csv` alongside `test_details.csv`.
+
+    `test_details.csv` holds everything, but the c-index tooling
+    (`cindex_bootstrap.py`, `surv_metric_stats.py`) reads a small dedicated
+    file with exactly case_id / risk / event_time / censorship, and
+    `dump_surv_risk.py` is what used to create it by re-running inference.
+    Emitting it at training time removes that step entirely.
+
+    Safe to call when the keys are absent (e.g. a checkpoint evaluated by an
+    older code path): it simply does nothing.
+    """
+    need = ('case_id', 'risk', 'event_time', 'censorship')
+    if not all(k in pred_data for k in need):
+        return False
+    pd.DataFrame({k: pred_data[k] for k in need}).to_csv(
+        os.path.join(split_res_dir, 'surv_risk.csv'), index=False)
+    return True
+
 
 class NLLSurvLoss(object):
     def __init__(self, alpha=0.0, eps=1e-7):
@@ -151,18 +249,44 @@ class NLLSurvLoss(object):
 
     def __call__(self, logits, y, c):
         return nll_loss(logits=logits, y=y.unsqueeze(dim=1), c=c.unsqueeze(dim=1), alpha=self.alpha, eps=self.eps)
+        
+# def nll_loss(logits, y, c, alpha=0.0, eps=1e-7):
+#     batch_size = len(Y)
+#     Y = Y.view(batch_size, 1)  # ground truth bin, 1,2,...,k
+#     c = c.view(batch_size, 1).float()  # censorship status, 0 or 1
+#     if S is None:
+#         S = torch.cumprod(1 - hazards, dim=1)  # surival is cumulative product of 1 - hazards
+#     # without padding, S(0) = S[0], h(0) = h[0]
+#     S_padded = torch.cat([torch.ones_like(c), S], 1)  # S(-1) = 0, all patients are alive from (-inf, 0) by definition
+#     # after padding, S(0) = S[1], S(1) = S[2], etc, h(0) = h[0]
+#     # h[y] = h(1)
+#     # S[1] = S(1)
+#     uncensored_loss = -(1 - c) * (
+#         torch.log(torch.gather(S_padded, 1, Y).clamp(min=eps)) + torch.log(torch.gather(hazards, 1, Y).clamp(min=eps))
+#     )
+#     censored_loss = -c * torch.log(torch.gather(S_padded, 1, Y + 1).clamp(min=eps))
+#     neg_l = censored_loss + uncensored_loss
+#     loss = (1 - alpha) * neg_l + alpha * uncensored_loss
+#     loss = loss.mean()
+#     return loss
 
 def nll_loss(logits, y, c, alpha=0.0, eps=1e-7):
     y = y.type(torch.int64)
     c = c.type(torch.int64)
 
     hazards = torch.sigmoid(logits)
+    # print("hazards shape", hazards.shape)
+
     S = torch.cumprod(1 - hazards, dim=1)
+    # print("S.shape", S.shape, S)
 
     S_padded = torch.cat([torch.ones_like(c), S], 1)
     s_prev = torch.gather(S_padded, dim=1, index=y).clamp(min=eps)
     h_this = torch.gather(hazards, dim=1, index=y).clamp(min=eps)
     s_this = torch.gather(S_padded, dim=1, index=y+1).clamp(min=eps)
+    # print('s_prev.s_prev', s_prev.shape, s_prev)
+    # print('h_this.shape', h_this.shape, h_this)
+    # print('s_this.shape', s_this.shape, s_this)
 
     uncensored_loss = -(1 - c) * (torch.log(s_prev) + torch.log(h_this))
     censored_loss = - c * torch.log(s_this)

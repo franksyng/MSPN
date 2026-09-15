@@ -6,30 +6,31 @@ import os
 import pandas as pd
 import numpy as np
 from utils.universal_utils import setup_seed_surv, create_dir, L1Reg, Lookahead
-from utils.metric_utils import compare_metrics
+from utils.metric_utils import eer_threshold, plot_roc_curves, save_cnf_matrix, compare_metrics
 from utils.core_utils import train_baseline_surv
 from utils.surv_utils_ms import evaluate_surv_ms
 from datasets import SlideSurvDatasetMS
 from torch.utils.data import DataLoader
 from models.clam import CLAM_MB_MS, CLAM_SB_MS, CLAM_MB_MSCat, CLAM_SB_MSCat
+from models.pretrained_mil import build_pretrained_abmil, encoder_of
 from models.abmil import ABMILMS, ABMILMSCat, ABMILPreMS, ABMILPreMSCat, ABMILPretrained
 from models.dsmil import FCLayer, BClassifier, DSMILMS, DSMILMSCat
-from utils.surv_utils import NLLSurvLoss
-from src.builder import create_model
+from sklearn.utils.class_weight import compute_class_weight
+from utils.surv_utils import NLLSurvLoss, save_surv_predictions
 
-parser = argparse.ArgumentParser('multiscale_surv')
+parser = argparse.ArgumentParser('mspn')
 parser.add_argument('--arch', default='abmil', help='select model architecture.')
 parser.add_argument('--n_gpu', type=int, default=-1, help='Manually give gpu number')
 parser.add_argument('--in_dim', type=int, default=1024, help='input dim of embedding.')
 parser.add_argument('--n_classes', type=int, default=4, help='num of classes.')
 # Path and dataset params
-parser.add_argument('--ann', type=str, default='/path/to', help='Annotation file.')
+parser.add_argument('--ann', type=str, default='../annotations/annotations_luad_surv.csv', help='Annotation file.')
 parser.add_argument('--res_root', default='results', help='Result directory.')
-parser.add_argument('--split_dir', type=str, default='/path/to', help='Split directory')
+parser.add_argument('--split_dir', type=str, default='../annotations/5fold_splits_surv/', help='Split directory')
 parser.add_argument('--num_workers', type=int, default=0, help='Number of worker for dataloader')
-
+# parser.add_argument('--data_dir', type=str, default='/home/frank/datasets/rn50_feats/nsclc_256_20x_feats/', help='Data directory.')
 parser.add_argument('--data_bb', type=str, default='conch', help='backbone for the data')
-parser.add_argument('--task', type=str, default='surgen_surv', choices=['surgen_surv'], help='Benchmarking task name')
+parser.add_argument('--task', type=str, default='luad_surv', choices=['luad_surv', 'surgen_surv', 'kirc_surv', 'blca_surv', 'brca_surv'], help='Benchmarking task name')
 
 # Optimiser params
 parser.add_argument('--opt', type=str, choices=['adam', 'adamw', 'sgd'], default='adamw')
@@ -39,7 +40,8 @@ parser.add_argument('--batch_size', type=int, default=1)
 parser.add_argument('--epochs', type=int, default=150, help='Expected training epoch number.')
 parser.add_argument('--lr', type=float, default=2e-4, help='Learning rate.')
 parser.add_argument('--weight_decay', type=float, default=1e-4, help='L2 reg for optimizer.')
-parser.add_argument('--pos_enc', default=False, action='store_true', help='include coords')
+parser.add_argument('--pos_enc', default=False, action='store_true', help='use positional encoding')
+parser.add_argument('--pos_enc_2d', default=False, action='store_true', help='use 2d positional encoding')
 parser.add_argument('--early_stopping', default=True, action='store_true', help='early stopping')
 # gradient accumulation
 parser.add_argument('--gc', type=int, default=32, help='Number of epoch for cumulative gradient. Set to 1 to disable l1 reg.')
@@ -61,14 +63,42 @@ split_dir = args.split_dir
 # data_dir = args.data_dir
 task = args.task
 cls_num = args.n_classes
-if task == 'surgen_surv':
+if task == 'luad_surv':
     classes = ['0', '1', '2', '3']
     label_col = 'label'
-    data_5x = f'/path/to/{args.data_bb}_feats/surgen_256_5x_feats/'
-    data_10x = f'/path/to/{args.data_bb}_feats/surgen_256_10x_feats/'
-    data_20x = f'/path/to/{args.data_bb}_feats/surgen_256_20x_feats/'
+    # 5x/10x now exist (527 slides each, 2026-08-31) and were rebuilt from the
+    # same corrected source as 20x: patch-count ratios are 0.255 and 0.066
+    # against the ideal 0.25/0.0625, and the 41 slides whose 20x magnification
+    # was fixed show the SAME ladder as the untouched ones.
+    data_5x = f'/home/frank/datasets/{args.data_bb}_feats/luad_256_5x_feats/'
+    data_10x = f'/home/frank/datasets/{args.data_bb}_feats/luad_256_10x_feats/'
+    data_20x = f'/home/frank/datasets/{args.data_bb}_feats/luad_256_20x_feats/'
+elif task == 'brca_surv':
+    classes = ['0', '1', '2', '3']
+    label_col = 'label'
+    data_5x = f'/home/frank/datasets/{args.data_bb}_feats/brca_256_5x_feats/'
+    data_10x = f'/home/frank/datasets/{args.data_bb}_feats/brca_256_10x_feats/'
+    data_20x = f'/home/frank/datasets/{args.data_bb}_feats/brca_256_20x_feats/'
+elif task == 'blca_surv':
+    classes = ['0', '1', '2', '3']
+    label_col = 'label'
+    data_5x = f'/home/frank/datasets/{args.data_bb}_feats/blca_256_5x_feats/'
+    data_10x = f'/home/frank/datasets/{args.data_bb}_feats/blca_256_10x_feats/'
+    data_20x = f'/home/frank/datasets/{args.data_bb}_feats/blca_256_20x_feats/'
+elif task == 'kirc_surv':
+    classes = ['0', '1', '2', '3']
+    label_col = 'label'
+    data_5x = f'/home/frank/datasets/{args.data_bb}_feats/rcc_256_5x_feats/'
+    data_10x = f'/home/frank/datasets/{args.data_bb}_feats/rcc_256_10x_feats/'
+    data_20x = f'/home/frank/datasets/{args.data_bb}_feats/rcc_256_20x_feats/'
+elif task == 'surgen_surv':
+    classes = ['0', '1', '2', '3']
+    label_col = 'label'
+    data_5x = f'/home/frank/datasets/{args.data_bb}_feats/surgen_256_5x_feats/'
+    data_10x = f'/home/frank/datasets/{args.data_bb}_feats/surgen_256_10x_feats/'
+    data_20x = f'/home/frank/datasets/{args.data_bb}_feats/surgen_256_20x_feats/'
 else:
-    print(f'Unsupported task: {task}.')
+    print(f'Unsupported Receptor: {task}.')
     raise NotImplementedError
 
 data_dir = (data_5x, data_10x, data_20x)
@@ -77,19 +107,10 @@ data_dir = (data_5x, data_10x, data_20x)
 splits = sorted(os.listdir(split_dir))  # sorted beginning from 0 to n split
 splits = [each for each in splits if each != '.DS_Store']  # partial dev env is macOS, remove influences
 # prepare result directory
-if arch == 'selfattn':
-    if args.pos_enc_2d:
-        res_name = (f"{arch}-2dpe_{task}_b{args.batch_size}_gc{args.gc}_"
-                            f"{args.opt}_e{args.epochs}_lr{args.lr}_"
-                            f"{args.loss_func}_{args.scheduler}")
-    else:
-        res_name = (f"{arch}-1dpe_{task}_b{args.batch_size}_gc{args.gc}_"
-                            f"{args.opt}_e{args.epochs}_lr{args.lr}_"
-                            f"{args.loss_func}_{args.scheduler}")
-else:
-    res_name = (f"{arch}_{task}_b{args.batch_size}_gc{args.gc}_"
-                        f"{args.opt}_e{args.epochs}_lr{args.lr}_"
-                        f"{args.loss_func}_{args.scheduler}")
+res_name = (f"{arch}_{task}_b{args.batch_size}_gc{args.gc}_"
+                    f"{args.opt}_e{args.epochs}_lr{args.lr}_"
+                    f"{args.loss_func}_{args.scheduler}"
+                    + (f"_s{args.seed}" if args.seed != 2024 else ""))
 res_dir = os.path.join(args.res_root, res_name)
 create_dir(args.res_root)  # if not exist, create one
 if args.debug == False:
@@ -124,6 +145,8 @@ if __name__ == '__main__':
         create_dir(ckpt_dir)  # if not exist, create one
 
         # prepare model
+        # Multi-scale BASELINES: the 5x/10x/20x triplet that MSPN is compared
+        # against. `*ms` is cross-scale attention, `*mscat` is concatenation.
         if arch == 'clammbms':
             model = CLAM_MB_MS(n_classes=cls_num, embed_dim=args.in_dim, mil_hidden_2=64)
         elif arch == 'clamsbms':
@@ -137,29 +160,13 @@ if __name__ == '__main__':
         elif arch == 'abmilmscat':
             model = ABMILMSCat(in_channels=args.in_dim, n_classes=cls_num)
         elif arch == 'abmilprems':
-            pre_model = create_model('abmil.base.uni_v2.pc108-24k', from_pretrained=True, num_classes=cls_num)
-            scratch_model = ABMILPretrained(in_dim=args.in_dim, num_classes=cls_num)
-            state = pre_model.state_dict()
-            for k,v in state.items():
-                print(k)
-            state = {k.removeprefix("model."): v for k, v in state.items()}
-            state = {k: v for k, v in state.items() if 'classifier' not in k and 'patch_embed' not in k}
-            missing_keys, unexpected_keys = scratch_model.load_state_dict(state, strict=False)
-            print("Missing keys:", missing_keys)
-            print("Unexpected keys:", unexpected_keys)
-            model = ABMILPreMS(in_channels=args.in_dim, n_classes=cls_num, abmil_head=scratch_model)
+            model = ABMILPreMS(in_channels=args.in_dim, n_classes=cls_num,
+                            abmil_head=build_pretrained_abmil(
+                                args.in_dim, cls_num, encoder_of(args)))
         elif arch == 'abmilpremscat':
-            pre_model = create_model('abmil.base.uni_v2.pc108-24k', from_pretrained=True, num_classes=cls_num)
-            scratch_model = ABMILPretrained(in_dim=args.in_dim, num_classes=cls_num)
-            state = pre_model.state_dict()
-            for k,v in state.items():
-                print(k)
-            state = {k.removeprefix("model."): v for k, v in state.items()}
-            state = {k: v for k, v in state.items() if 'classifier' not in k and 'patch_embed' not in k}
-            missing_keys, unexpected_keys = scratch_model.load_state_dict(state, strict=False)
-            print("Missing keys:", missing_keys)
-            print("Unexpected keys:", unexpected_keys)
-            model = ABMILPreMSCat(in_channels=args.in_dim, n_classes=cls_num, abmil_head=scratch_model)
+            model = ABMILPreMSCat(in_channels=args.in_dim, n_classes=cls_num,
+                            abmil_head=build_pretrained_abmil(
+                                args.in_dim, cls_num, encoder_of(args)))
         elif arch == 'dsmilms':
             i_classifier = FCLayer(args.in_dim, 512, cls_num)
             b_classifier = BClassifier(input_size=512)
@@ -170,7 +177,6 @@ if __name__ == '__main__':
             model = DSMILMSCat(n_classes=cls_num, i_classifier=i_classifier, b_classifier=b_classifier, mil_hidden_1=512)
         else:
             raise NotImplementedError
-
         # put model on one or multiple GPUs
         if hasattr(model, 'relocate'):
             model.relocate(device, args.n_gpu)
@@ -213,7 +219,9 @@ if __name__ == '__main__':
         annotations = pd.read_csv(ann_path, dtype={'case_id': str})
         curr_split = pd.read_csv(split_path, dtype={'case_id': str})
         train_set, val_set, test_set = get_data(curr_split)
-
+        # curr_labels = train_set.get_label_list()
+        # class_weights = compute_class_weight(class_weight='balanced', classes=np.unique(curr_labels), y=np.array(curr_labels))
+        # class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device)
         if args.loss_func == 'nll_surv':
             criterion = NLLSurvLoss(alpha=0.15)
         else:
@@ -251,9 +259,25 @@ if __name__ == '__main__':
 
         # TO DO: for getting prediciton score only.
         eval_details_df.to_csv(os.path.join(split_res_dir, f'test_details.csv'))
+        # Also emit the dedicated risk file the c-index tooling reads, so a
+        # survival run is self-sufficient and never needs re-evaluation.
+        save_surv_predictions(pred_details, split_res_dir)
 
         compare_metrics(all_metrics, split_res_dir)
+        # train_details_df = pd.DataFrame(pred_details[0])
+        # val_details_df = pd.DataFrame(pred_details[1])
+        # test_details_df = pd.DataFrame(pred_details[2])
+        # eval_details_df = pd.DataFrame(pred_details[3])
+        # train_details_df.to_csv(os.path.join(split_res_dir, 'train_details.csv'))
+        # val_details_df.to_csv(os.path.join(split_res_dir, 'val_details.csv'))
+        # test_details_df.to_csv(os.path.join(split_res_dir, 'test_details.csv'))
+
+        
+        # split_metics_auc_df = pd.DataFrame(dict({'train': all_metrics['auc']['train'], 'val': all_metrics['auc']['val'], 'test': all_metrics['auc']['test']}))
+        # split_metics_f1_df = pd.DataFrame(dict({'train': all_metrics['f1']['train'], 'val': all_metrics['f1']['val'], 'test': all_metrics['f1']['test']}))
         split_metics_df = pd.DataFrame({'val': logs['val_metrics'], 'test': logs['test_metrics']})
+        # split_metics_auc_df.to_csv(os.path.join(split_res_dir, 'split_auc_metrics.csv'))
+        # split_metics_f1_df.to_csv(os.path.join(split_res_dir, 'split_f1_metrics.csv'))
         split_metics_df.to_csv(os.path.join(split_res_dir, 'split_cindex.csv'))
 
         cindex_metrics['train'].append(logs['train_cindex'])

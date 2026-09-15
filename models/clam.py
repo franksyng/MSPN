@@ -1,8 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils.universal_utils import initialize_weights
-
 
 class CLAM_SB_Head(nn.Module):
     def __init__(self, size_arg = "small", dropout = 0., k_sample=8, n_classes=2,
@@ -34,12 +32,17 @@ class CLAM_SB_Head(nn.Module):
         device=h.device
         if len(A.shape) == 1:
             A = A.view(1, -1)
-        top_p_ids = torch.topk(A, self.k_sample)[1][-1]
+        # k must not exceed the bag size. PANDA needle biopsies have as few as
+        # 6 patches at 5x (22 slides < 8), and the multi-scale CLAM heads run
+        # a 5x branch, so topk(A, 8) raised 'selected index k out of range'.
+        # No-op for every other cohort here (bags are thousands of patches).
+        k = min(self.k_sample, A.shape[-1])
+        top_p_ids = torch.topk(A, k)[1][-1]
         top_p = torch.index_select(h, dim=0, index=top_p_ids)
-        top_n_ids = torch.topk(-A, self.k_sample, dim=1)[1][-1]
+        top_n_ids = torch.topk(-A, k, dim=1)[1][-1]
         top_n = torch.index_select(h, dim=0, index=top_n_ids)
-        p_targets = self.create_positive_targets(self.k_sample, device)
-        n_targets = self.create_negative_targets(self.k_sample, device)
+        p_targets = self.create_positive_targets(k, device)
+        n_targets = self.create_negative_targets(k, device)
 
         all_targets = torch.cat([p_targets, n_targets], dim=0)
         all_instances = torch.cat([top_p, top_n], dim=0)
@@ -53,9 +56,14 @@ class CLAM_SB_Head(nn.Module):
         device=h.device
         if len(A.shape) == 1:
             A = A.view(1, -1)
-        top_p_ids = torch.topk(A, self.k_sample)[1][-1]
+        # k must not exceed the bag size. PANDA needle biopsies have as few as
+        # 6 patches at 5x (22 slides < 8), and the multi-scale CLAM heads run
+        # a 5x branch, so topk(A, 8) raised 'selected index k out of range'.
+        # No-op for every other cohort here (bags are thousands of patches).
+        k = min(self.k_sample, A.shape[-1])
+        top_p_ids = torch.topk(A, k)[1][-1]
         top_p = torch.index_select(h, dim=0, index=top_p_ids)
-        p_targets = self.create_negative_targets(self.k_sample, device)
+        p_targets = self.create_negative_targets(k, device)
         logits = classifier(top_p)
         p_preds = torch.topk(logits, 1, dim = 1)[1].squeeze(1)
         instance_loss = self.instance_loss_fn(logits, p_targets)
@@ -94,6 +102,17 @@ class CLAM_SB_Head(nn.Module):
                 total_inst_loss /= len(self.instance_classifiers)
                 
         M = torch.mm(A, h) 
+        # logits = self.classifiers(M)
+        # Y_hat = torch.topk(logits, 1, dim = 1)[1]
+        # Y_prob = F.softmax(logits, dim = 1)
+        # if instance_eval:
+            # results_dict = {'instance_loss': total_inst_loss, 'inst_labels': np.array(all_targets), 
+            # 'inst_preds': np.array(all_preds)}
+        # else:
+            # results_dict = {}
+        # if return_features:
+            # results_dict.update({'features': M})
+        # return logits, Y_prob, Y_hat, A_raw, results_dict
         return M, A_raw, total_inst_loss
 
 class CLAM_MB_Head(CLAM_SB_Head):
@@ -107,6 +126,8 @@ class CLAM_MB_Head(CLAM_SB_Head):
         attention_net = Attn_Net_Gated(L = size[1], D = size[2], dropout = dropout, n_classes = n_classes)
         fc.append(attention_net)
         self.attention_net = nn.Sequential(*fc)
+        # bag_classifiers = [nn.Linear(size[1], 1) for i in range(n_classes)] #use an indepdent linear layer to predict each class
+        # self.classifiers = nn.ModuleList(bag_classifiers)
         instance_classifiers = [nn.Linear(size[1], 2) for i in range(n_classes)]
         self.instance_classifiers = nn.ModuleList(instance_classifiers)
         self.k_sample = k_sample
@@ -147,6 +168,21 @@ class CLAM_MB_Head(CLAM_SB_Head):
         M = torch.mm(A, h)
         return M, A_raw, total_inst_loss
 
+        # logits = torch.empty(1, self.n_classes).float().to(M.device)
+        # for c in range(self.n_classes):
+        #     logits[0, c] = self.classifiers[c](M[c])
+
+        # Y_hat = torch.topk(logits, 1, dim = 1)[1]
+        # Y_prob = F.softmax(logits, dim = 1)
+        # if instance_eval:
+        #     results_dict = {'instance_loss': total_inst_loss, 'inst_labels': np.array(all_targets), 
+        #     'inst_preds': np.array(all_preds)}
+        # else:
+        #     results_dict = {}
+        # if return_features:
+        #     results_dict.update({'features': M})
+        # return logits, Y_prob, Y_hat, A_raw, results_dict
+
 class CLAM_SB(nn.Module):
     def __init__(self, size_arg = "small", dropout = 0., k_sample=8, n_classes=2,
         instance_loss_fn=nn.CrossEntropyLoss(), subtyping=False, embed_dim=1024):
@@ -154,7 +190,6 @@ class CLAM_SB(nn.Module):
         self.clamsb_head = CLAM_SB_Head(size_arg=size_arg, dropout=dropout, k_sample=k_sample, n_classes=n_classes, instance_loss_fn=instance_loss_fn,
                                         subtyping=subtyping, embed_dim=embed_dim)
         self.classifier = nn.Linear(512, n_classes)
-        initialize_weights(self)
     
     def forward(self, h, label=None, instance_eval=False, vis_heatmap=False):
         if not vis_heatmap:
@@ -172,7 +207,6 @@ class CLAM_MB(nn.Module):
         self.n_classes = n_classes
         bag_classifiers = [nn.Linear(512, 1) for i in range(n_classes)] #use an indepdent linear layer to predict each class
         self.classifiers = nn.ModuleList(bag_classifiers)
-        initialize_weights(self)
     
     def forward(self, h, label=None, instance_eval=False, vis_heatmap=False):
         if not vis_heatmap:
@@ -203,7 +237,6 @@ class CLAM_SB_MS(nn.Module):
             nn.Conv2d(int(mil_hidden_2/2), 1, kernel_size=3, padding=1),
         )
         self.classifier = nn.Linear(mil_hidden_2, n_classes)
-        initialize_weights(self)
     
     def forward(self, h, label=None, instance_eval=False, vis_heatmap=False):
         if not vis_heatmap:
@@ -250,7 +283,7 @@ class CLAM_MB_MS(nn.Module):
         )
         bag_classifiers = [nn.Linear(mil_hidden_2, 1) for i in range(n_classes)] #use an indepdent linear layer to predict each class
         self.bag_classifiers = nn.ModuleList(bag_classifiers)
-        initialize_weights(self)
+        # self.classifier = nn.Linear(mil_hidden_2, n_classes)
     
     def forward(self, h, label=None, instance_eval=False, vis_heatmap=False):
         if not vis_heatmap:
@@ -288,7 +321,6 @@ class CLAM_SB_MSCat(nn.Module):
             nn.Linear(mil_hidden_1, mil_hidden_2),
         )
         self.classifier = nn.Linear(int(mil_hidden_2*3), n_classes)
-        initialize_weights(self)
     
     def forward(self, h, label=None, instance_eval=False, vis_heatmap=False):
         if not vis_heatmap:
@@ -305,6 +337,7 @@ class CLAM_SB_MSCat(nn.Module):
         ms_feats = torch.concat((self.ms_encoder(M_5x), self.ms_encoder(M_10x), self.ms_encoder(M_20x)), dim=1)
         logits = self.classifier(ms_feats)
 
+        # logits = self.classifier(M)
         return logits, total_inst_loss_5x + total_inst_loss_10x + total_inst_loss_20x
 
 class CLAM_MB_MSCat(nn.Module):
@@ -321,9 +354,9 @@ class CLAM_MB_MSCat(nn.Module):
         self.ms_encoder = nn.Sequential(
             nn.Linear(mil_hidden_1, mil_hidden_2),
         )
+        # self.classifier = nn.Linear(int(mil_hidden_2*3), n_classes)
         bag_classifiers = [nn.Linear(int(mil_hidden_2*3), 1) for i in range(n_classes)] #use an indepdent linear layer to predict each class
         self.bag_classifiers = nn.ModuleList(bag_classifiers)
-        initialize_weights(self)
     
     def forward(self, h, label=None, instance_eval=False, vis_heatmap=False):
         if not vis_heatmap:
@@ -342,6 +375,7 @@ class CLAM_MB_MSCat(nn.Module):
             ms_feats = torch.concat((self.ms_encoder(M_5x[c]).unsqueeze(0), self.ms_encoder(M_10x[c]).unsqueeze(0), self.ms_encoder(M_20x[c]).unsqueeze(0)), dim=1)
             logits[0, c] = self.bag_classifiers[c](ms_feats)
         return logits, total_inst_loss_5x + total_inst_loss_10x + total_inst_loss_20x
+
 
 
 class Attn_Net_Gated(nn.Module):

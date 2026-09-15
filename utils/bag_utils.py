@@ -1,13 +1,26 @@
 
 # basic imports
+import numpy as np
+from sklearn import metrics
+from torch import device
 from tqdm import tqdm
 import numpy as np
+from copy import deepcopy
 
 # torch
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 from utils.universal_utils import load_loop_logs
 from utils.metric_utils import print_cnf_matrix, find_pred_score_binary, eer_threshold, find_best_threshold_youden, MetricLogger
+
+
+def _mspn_aux(model, mdl_name):
+    """Auxiliary MSPN loss (e.g. containment), if this arch exposes one."""
+    if 'mspn' not in mdl_name:
+        return None
+    return getattr(getattr(model, 'mspn', None), 'aux_loss', None)
 
 def slide_level_loop(model, device, optimizer, criterion, gc, loader, case_len, cls_num=None, reg_fn=None, l1_reg=None, phase=None, binary=False, mdl_name='None'):
     loop_logger = load_loop_logs(binary, phase)
@@ -30,10 +43,13 @@ def slide_level_loop(model, device, optimizer, criterion, gc, loader, case_len, 
                 data = data.to(device, dtype=torch.float32)
                 with torch.torch.set_grad_enabled(phase == 'train'):
                     # output, _ = model(data, coords)
-                    if 'clam' in mdl_name:
+                    if 'clam' in mdl_name or 'scl' in mdl_name:
                         mdl_out = model(data, coords, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(output, target) + 0.5*inst_loss
+                        _a = _mspn_aux(model, mdl_name)
+                        if _a is not None:
+                            loss = loss + _a
                     elif 'dsmil' in mdl_name:
                         mdl_out = model(data, coords)
                         classes, output, _, _ = mdl_out
@@ -41,14 +57,20 @@ def slide_level_loop(model, device, optimizer, criterion, gc, loader, case_len, 
                         loss_bag = criterion(output, target)
                         loss_max = criterion(max_prediction.view(1, -1), target)
                         loss = 0.5*loss_bag + 0.5*loss_max
+                        _a = _mspn_aux(model, mdl_name)
+                        if _a is not None:
+                            loss = loss + _a
                     else:
                         mdl_out = model(data, coords)
                         output, _ = mdl_out
                         loss = criterion(output, target)
+                        _aux = _mspn_aux(model, mdl_name)
+                        if _aux is not None:
+                            loss = loss + _aux
             else:
                 data = data.to(device, dtype=torch.float32)
                 with torch.torch.set_grad_enabled(phase == 'train'):
-                    if 'clam' in mdl_name:
+                    if 'clam' in mdl_name or 'scl' in mdl_name:
                         mdl_out = model(data, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(output, target) + 0.5*inst_loss
@@ -170,7 +192,7 @@ def evaluate(model, device, criterion, test_loader, cls_num, binary, mdl_name='N
                 data = data.to(device, dtype=torch.float32)
                 with torch.torch.no_grad():
                     # output, _ = model(data, coords)
-                    if 'clam' in mdl_name:
+                    if 'clam' in mdl_name or 'scl' in mdl_name:
                         mdl_out = model(data, coords, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(output, target) + 0.5*inst_loss
@@ -188,7 +210,7 @@ def evaluate(model, device, criterion, test_loader, cls_num, binary, mdl_name='N
             else:
                 data = data.to(device, dtype=torch.float32)
                 with torch.no_grad():
-                    if 'clam' in mdl_name:
+                    if 'clam' in mdl_name or 'scl' in mdl_name:
                         mdl_out = model(data, label=target, instance_eval=True)
                         output, inst_loss = mdl_out
                         loss = 0.5*criterion(output, target) + 0.5*inst_loss
@@ -218,6 +240,7 @@ def evaluate(model, device, criterion, test_loader, cls_num, binary, mdl_name='N
                 y_hat = out_probs[0][curr_disc]
                 y_proba = out_probs[0].detach().cpu().tolist()
                 eval_logger.log_batch_mul(y_hat.detach().cpu().tolist(), target.detach().cpu().tolist(), curr_disc.detach().cpu().tolist(), y_proba, list(case_id))
+                
     
     eval_logger.generate_y_metrics()
     if binary:
@@ -243,6 +266,7 @@ def evaluate(model, device, criterion, test_loader, cls_num, binary, mdl_name='N
         # do discrete classification stuff only after setting optimal threshold
         eval_logger.get_correctness()
         logs['eval_pred_data'] = eval_logger.data_all
+        logs['eval_pred_data']['y_pred'] = eval_logger.y_probas
         logs['eval_cnf_matrix'] = eval_logger.get_cnf_matrix()
         logs['eval_f1'] = eval_logger.get_f1()
         # logs['eval_recall'] = eval_logger.get_recall()

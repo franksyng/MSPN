@@ -8,6 +8,9 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from tqdm import tqdm
+from sklearn import preprocessing
+
 def normalize_case_id(series):
     # Convert to pandas StringDtype, trim, and strip trailing ".0"
     s = series.astype('string').str.strip()
@@ -57,13 +60,47 @@ class GenericDataset(Dataset):
 
 
 class SlideDataset(GenericDataset):
-    def __init__(self, annotations, slides_root, splits, label_col, set_type, pos_enc=False, eval_mode=False):
+    def __init__(self, annotations, slides_root, splits, label_col, set_type, pos_enc=False, eval_mode=False, data_mode=None):
         super(SlideDataset, self).__init__(annotations, splits, set_type, eval_mode)
+        # print('ann len in', len(self.curr_annotations))
         self.curr_annotations['case_id'] = normalize_case_id(self.curr_annotations['case_id'])
+        # self.curr_annotations['case_id'] = self.curr_annotations['case_id'].astype('string')
+        # print('==== cann', len(self.curr_annotations))
+        # print(self.curr_annotations)
         split_ann = load_slide_data(slides_root, self.curr_annotations)
+        # print('==== sann', len(split_ann))
         self.split_ann = split_ann.merge(self.curr_annotations, how='inner', on='case_id')
         self.label = label_col
         self.pos_enc = pos_enc
+        self.data_mode = data_mode
+        # print(self.split_ann)
+
+    def _build_spatial_grid(self, x, coords, patch_size=1120, img_size=96):
+        """
+        Arrange bag-of-patches into a 2D spatial feature grid.
+
+        Args:
+            x:         [N, D]  patch features
+            coords:    [N, 2]  patch coordinates in pixel space (x, y top-left corner),
+                               non-overlapping with stride = patch_size pixels
+            patch_size: patch stride in pixels (default 1120)
+            img_size:   output grid side length in patch units (default 96)
+
+        Returns:
+            grid: [D, img_size, img_size]  zero-padded spatial grid
+        """
+        N, D = x.shape
+
+        # coords[:,0]=x (col), coords[:,1]=y (row); convert to 0-based integer indices
+        gc = (coords // patch_size).long()   # [N, 2]
+        cols = gc[:, 0] - gc[:, 0].min()    # x → col index, 0-based
+        rows = gc[:, 1] - gc[:, 1].min()    # y → row index, 0-based
+
+        grid = torch.zeros(D, img_size, img_size, dtype=x.dtype)
+        valid = (rows < img_size) & (cols < img_size)
+        grid[:, rows[valid], cols[valid]] = x[valid].T   # [D, N_valid]
+
+        return grid  # [D, img_size, img_size]
 
     def __len__(self):
         return len(self.split_ann)
@@ -74,11 +111,16 @@ class SlideDataset(GenericDataset):
         img = torch.tensor(np.array(h5py.File(img_path, 'r')['features']), dtype=torch.float32)
         coords = torch.tensor(np.array(h5py.File(img_path, 'r')['coords']), dtype=torch.float32)  # [x, y]
         label = self.split_ann[self.label].iloc[idx]
+        
+        if self.data_mode == 'setmil':
+            img = self._build_spatial_grid(img, coords)
 
+        # print(img_id)
         if self.pos_enc:
             return (img, coords), label, img_id
         else:
             return img, label, img_id
+
 
     def get_len(self):
         return len(self.split_ann)
@@ -91,15 +133,20 @@ class SlideDatasetMS(GenericDataset):
         super(SlideDatasetMS, self).__init__(annotations, splits, set_type, eval_mode)
         # print('ann len in', len(self.curr_annotations))
         self.curr_annotations['case_id'] = normalize_case_id(self.curr_annotations['case_id'])
+        # self.curr_annotations['case_id'] = self.curr_annotations['case_id'].astype('string')
+        # print('==== cann', len(self.curr_annotations))
+        # print(self.curr_annotations)
         slides_5x, slides_10x, slides_20x = slides_root
         split_ann_5x = load_slide_data(slides_5x, self.curr_annotations)
         split_ann_10x = load_slide_data(slides_10x, self.curr_annotations)
         split_ann_20x = load_slide_data(slides_20x, self.curr_annotations)
+        # print('==== sann', len(split_ann))
         self.split_ann_5x = split_ann_5x.merge(self.curr_annotations, how='inner', on='case_id')
         self.split_ann_10x = split_ann_10x.merge(self.curr_annotations, how='inner', on='case_id')
         self.split_ann_20x = split_ann_20x.merge(self.curr_annotations, how='inner', on='case_id')
         self.label = label_col
         self.pos_enc = pos_enc
+        # print(self.split_ann)
 
     def __len__(self):
         return len(self.split_ann_20x)
@@ -121,6 +168,7 @@ class SlideDatasetMS(GenericDataset):
 
         label = self.split_ann_20x[self.label].iloc[idx]
 
+        # print(img_id)
         if self.pos_enc:
             return [[img_5x, img_10x, img_20x], [coords_5x, coords_10x, coords_20x]], label, img_id
         else:
@@ -137,10 +185,13 @@ class SlideSurvDataset(GenericDataset):
     def __init__(self, annotations, slides_root, splits, label_col, set_type, pos_enc=False, eval_mode=False):
         super(SlideSurvDataset, self).__init__(annotations, splits, set_type, eval_mode)
         self.curr_annotations['case_id'] = normalize_case_id(self.curr_annotations['case_id'])
+        # print('curr ann', len(self.curr_annotations))
         split_ann = load_slide_data(slides_root, self.curr_annotations)
+        # print('split ann', len(split_ann))
         self.split_ann = split_ann.merge(self.curr_annotations, how='inner', on='case_id')
         self.label = label_col
         self.pos_enc = pos_enc
+        # print(self.split_ann)
 
     def __len__(self):
         return len(self.split_ann)
@@ -154,7 +205,9 @@ class SlideSurvDataset(GenericDataset):
         surv_month = self.split_ann['survival_month'].iloc[idx]
         censorship = self.split_ann['censorship'].iloc[idx]
 
+        # print(img_id)
         if self.pos_enc:
+            # coords = coords[torch.randperm(coords.size(0))]
             return (img, coords), label, img_id, surv_month, censorship
         else:
             return img, label, img_id, surv_month, censorship
@@ -170,15 +223,18 @@ class SlideSurvDatasetMS(GenericDataset):
     def __init__(self, annotations, slides_root, splits, label_col, set_type, pos_enc=False, eval_mode=False):
         super(SlideSurvDatasetMS, self).__init__(annotations, splits, set_type, eval_mode)
         self.curr_annotations['case_id'] = normalize_case_id(self.curr_annotations['case_id'])
+        # print('curr ann', len(self.curr_annotations))
         slides_5x, slides_10x, slides_20x = slides_root
         split_ann_5x = load_slide_data(slides_5x, self.curr_annotations)
         split_ann_10x = load_slide_data(slides_10x, self.curr_annotations)
         split_ann_20x = load_slide_data(slides_20x, self.curr_annotations)
+        # print('==== sann', len(split_ann))
         self.split_ann_5x = split_ann_5x.merge(self.curr_annotations, how='inner', on='case_id')
         self.split_ann_10x = split_ann_10x.merge(self.curr_annotations, how='inner', on='case_id')
         self.split_ann_20x = split_ann_20x.merge(self.curr_annotations, how='inner', on='case_id')
         self.label = label_col
         self.pos_enc = pos_enc
+        # print(self.split_ann)
 
     def __len__(self):
         return len(self.split_ann_20x)
@@ -201,7 +257,9 @@ class SlideSurvDatasetMS(GenericDataset):
         label = self.split_ann_20x[self.label].iloc[idx]
         surv_month = self.split_ann_20x['survival_month'].iloc[idx]
         censorship = self.split_ann_20x['censorship'].iloc[idx]
+        # print(label)
 
+        # print(img_id)
         if self.pos_enc:
             return [[img_5x, img_10x, img_20x], [coords_5x, coords_10x, coords_20x]], label, img_id, surv_month, censorship
         else:
@@ -213,3 +271,29 @@ class SlideSurvDatasetMS(GenericDataset):
 
     def get_label_list(self):
         return self.split_ann_20x[self.label].values.tolist()
+
+class PatchDataset(Dataset):
+    def __init__(self, data, targets, coords=None):
+        self.data = data
+        # print('data shape', self.data.shape)
+        if coords != None:
+            self.coords = coords
+        else:
+            self.coords = None
+        self.targets = targets
+    
+    def __len__(self):
+        return self.data.shape[0]
+
+    def __getitem__(self, idx):
+        # print(self.targets.shape)
+        img = self.data[idx, :] # [B, D]
+        target = self.targets[:,idx] # [1, B]
+        # print(img.shape)
+        # print(target.shape)
+        if self.coords != None:
+            coords = self.coords[idx, :].unsqueeze(0) # [1, B, 2]
+            return img, coords, target
+        else:
+            return img, target
+
